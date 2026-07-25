@@ -1,0 +1,15 @@
+name: spider2-tc
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - fastapi
+      - openai
+      - pandas
+      - pytest
+      - pyyaml
+      - requests
+      - snowflake-connector-python
+      - uvicorn[standard]

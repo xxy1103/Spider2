@@ -141,3 +141,7 @@ spider2-lite/resource/databases/spider2-localdb
 credentials/
 **/credentials/
 
+# Spider Agent TC local secrets
+methods/spider-agent-tc/configs/secrets.yaml
+
+methods/spider-agent-tc/configs/mock.secrets.yaml

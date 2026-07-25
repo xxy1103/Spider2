@@ -1,24 +1,22 @@
-import random
-import json
 import os
 import time
 from openai import OpenAI
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict
 import threading
-import glob
 from copy import deepcopy
 
-from file_manager import FileManager
-from message_processor import MessageProcessor
-from prompt_builders import get_prompt_builder
+from .file_manager import FileManager
+from .message_processor import MessageProcessor
+from .prompt_builders import get_prompt_builder
 
 class LLMAgent:
     def __init__(self, args):
         self.args = args
         self.model_client = OpenAI(
-            base_url=os.getenv("OPENAI_API_BASE"),
-            api_key=os.getenv("OPENAI_API_KEY"),
+            base_url=args.model_base_url,
+            api_key=args.model_api_key,
+            timeout=args.model_request_timeout,
         )
         
         self.file_manager = FileManager(args)
@@ -30,10 +28,12 @@ class LLMAgent:
         
     def call_llm(self, messages, instance_id=None, round_num=None):
         """Call LLM with retry mechanism"""
-        max_retries = 500
-        retry_count = 0
+        retry = self.args.retry
+        max_attempts = retry["max_attempts"]
+        delay = retry["initial_delay_seconds"]
+        attempt = 0
         
-        while retry_count < max_retries:
+        while attempt < max_attempts:
             try:
                 response = self.model_client.chat.completions.create(
                     model=self.args.model,
@@ -51,15 +51,23 @@ class LLMAgent:
                     raise Exception("Empty response content")
                     
             except Exception as e:
-                retry_count += 1
+                attempt += 1
                 instance_info = f" for {instance_id}" if instance_id else ""
                 round_info = f" (round {round_num})" if round_num is not None else ""
-                print(f"LLM Error{instance_info}{round_info}: {e}. Retrying ({retry_count}/{max_retries})...")
+                safe_message = str(e).replace(self.args.model_api_key, "***REDACTED***")
+                print(
+                    f"LLM Error{instance_info}{round_info}: {type(e).__name__}: {safe_message}. "
+                    f"Attempt {attempt}/{max_attempts} failed."
+                )
                 
-                if retry_count >= max_retries:
-                    return f"ERROR: Failed to get response after {max_retries} retries"
+                if attempt >= max_attempts:
+                    return f"ERROR: Failed to get response after {max_attempts} attempts"
                 
-                time.sleep(0.2)
+                time.sleep(delay)
+                delay = min(
+                    delay * retry["backoff_multiplier"],
+                    retry["max_delay_seconds"],
+                )
         
         return "ERROR: Unexpected exit from retry loop"
     
@@ -131,17 +139,12 @@ class LLMAgent:
             print(f"Error processing {instance_id} rollout {rollout_idx + 1}: {str(e)}")
             return error_result
     
-    def run(self):
+    def run(self, items):
         """Main execution function"""
-        existing_results = self.file_manager.load_existing_results()
+        self.file_manager.load_existing_results()
         self.processed_instances = self.file_manager.processed_instances
         os.makedirs(self.args.output_folder, exist_ok=True)
-        
-        with open(self.args.input_file, 'r', encoding='utf-8') as f:
-            items = [json.loads(line) for line in f]
 
-        random.shuffle(items)
-        
         tasks_to_process = []
         for item in items:
             instance_id = item["instance_id"]
@@ -162,7 +165,7 @@ class LLMAgent:
         
         if not tasks_to_process:
             print("All rollouts have been completed successfully!")
-            return
+            return self.build_summary(items)
         
         completed_count = 0
         with ThreadPoolExecutor(max_workers=self.args.num_threads) as executor:
@@ -183,3 +186,30 @@ class LLMAgent:
         
         print(f"All processing completed! Results saved to: {self.args.output_folder}")
         print(f"Total processed in this run: {completed_count}")
+        return self.build_summary(items)
+
+    def build_summary(self, items):
+        """Summarize completion from persisted per-instance result files."""
+        successful = []
+        failed = []
+        required_rollouts = self.args.rollout_number
+        for item in items:
+            instance_id = item["instance_id"]
+            results = self.file_manager.load_instance_results(instance_id)
+            terminated = sum(
+                1
+                for result in results
+                if isinstance(result, dict) and result.get("terminated") is True
+            )
+            if terminated >= required_rollouts:
+                successful.append(instance_id)
+            else:
+                failed.append(instance_id)
+        return {
+            "total_tasks": len(items),
+            "successful_tasks": len(successful),
+            "failed_tasks": len(failed),
+            "successful_instance_ids": successful,
+            "failed_instance_ids": failed,
+            "rollout_number": required_rollouts,
+        }

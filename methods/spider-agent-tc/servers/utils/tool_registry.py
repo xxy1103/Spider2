@@ -33,7 +33,7 @@ class ToolRegistry:
     def has_tool(self, name: str) -> bool:
         return name in self.tools
     
-    def load_tools(self):
+    def load_tools(self, config=None):
         logger.info("Loading tools...")
 
         import servers.tools as tools_package
@@ -43,6 +43,8 @@ class ToolRegistry:
                 try:
                     module = importlib.import_module(module_name)
                     
+                    if config is not None and hasattr(module, "configure"):
+                        module.configure(config)
                     if hasattr(module, 'register_tools'):
                         module.register_tools(self)
                 except Exception as e:

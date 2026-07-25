@@ -112,7 +112,7 @@ class MessageProcessor:
             response = requests.post(
                 url, 
                 json=request_body, 
-                timeout=30,
+                timeout=self.args.tool_request_timeout,
                 headers={"Content-Type": "application/json"}
             )
             response.raise_for_status()
@@ -127,5 +127,5 @@ class MessageProcessor:
                 return [{"error": f"Unexpected API response format: {api_response}"}]
                 
         except Exception as e:
-            error_result = {"error": f"API error: {str(e)}"}
+            error_result = {"error": f"Tool API error: {type(e).__name__}"}
             return [error_result] * len(tool_calls)

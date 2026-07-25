@@ -4,32 +4,48 @@ import pandas as pd
 from typing import Dict, Any, Tuple
 import logging
 import time
-import json
-import os
 
 logger = logging.getLogger(__name__)
 
 TIMEOUT = 60
 MAX_CSV_CHARS = 2000
+SNOWFLAKE_CREDENTIALS = None
+SNOWFLAKE_MODE = "live"
+MOCK_RESPONSE_CSV = ""
 
-def get_snowflake_credentials() -> Dict[str, str]:
-    credentials_path = "credentials/snowflake_credential.json"
-    try:
-        with open(credentials_path, "r") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        logger.error(f"Credentials file not found at: {os.path.abspath(credentials_path)}")
-        raise
-    except json.JSONDecodeError:
-        logger.error(f"Invalid JSON in credentials file: {credentials_path}")
-        raise
-    except Exception as e:
-        logger.error(f"Error loading credentials: {str(e)}")
-        raise
+
+def configure(config):
+    global TIMEOUT, MAX_CSV_CHARS, SNOWFLAKE_CREDENTIALS, SNOWFLAKE_MODE, MOCK_RESPONSE_CSV
+    settings = config.raw["tools"]["snowflake"]
+    TIMEOUT = settings["timeout_seconds"]
+    MAX_CSV_CHARS = settings["max_output_chars"]
+    SNOWFLAKE_MODE = settings["mode"]
+    MOCK_RESPONSE_CSV = settings.get("mock", {}).get("response_csv", "")
+    SNOWFLAKE_CREDENTIALS = (
+        dict(config.secrets["snowflake"]) if SNOWFLAKE_MODE == "live" else None
+    )
+
+
+def _redact(message: str) -> str:
+    if not SNOWFLAKE_CREDENTIALS:
+        return message
+    for key in ("user", "password"):
+        value = SNOWFLAKE_CREDENTIALS.get(key)
+        if value:
+            message = message.replace(value, "***REDACTED***")
+    return message
 
 def execute_snowflake_sql(sql: str, **kwargs) -> Dict[str, Any]:
-    logger.info(f"Executing Snowflake SQL: {sql}")
-    
+    if SNOWFLAKE_MODE == "mock":
+        return {
+            "content": (
+                "EXECUTION RESULT of [execute_snowflake_sql]:\n"
+                "MOCK MODE: no Snowflake query was executed. "
+                "This result must not be used for evaluation.\n\n"
+                f"```csv\n{MOCK_RESPONSE_CSV}\n```"
+            )
+        }
+
     timeout = kwargs.get('timeout', TIMEOUT)
     start_time = time.time()
     
@@ -38,11 +54,12 @@ def execute_snowflake_sql(sql: str, **kwargs) -> Dict[str, Any]:
     conn = None
     try:
         # Get Snowflake credentials from file
-        snowflake_credential = get_snowflake_credentials()
+        if SNOWFLAKE_CREDENTIALS is None:
+            raise RuntimeError("Snowflake tool was not configured")
         
         # Connect to Snowflake using credentials
         conn = snowflake.connector.connect(
-            **snowflake_credential,
+            **SNOWFLAKE_CREDENTIALS,
             login_timeout=timeout,
             network_timeout=timeout
         )
@@ -96,17 +113,17 @@ Note: The result has been truncated to {MAX_CSV_CHARS} characters for display pu
         
         
     except ProgrammingError as e:
-        content = f"SQL Error: {str(e)}"
-        logger.error(f"Snowflake SQL error: {str(e)}")
+        content = f"SQL Error: {_redact(str(e))}"
+        logger.error("Snowflake SQL programming error")
     except DatabaseError as e:
-        content = f"Database error: {str(e)}"
-        logger.error(f"Snowflake database error: {str(e)}")
+        content = f"Database error: {_redact(str(e))}"
+        logger.error("Snowflake database error")
     except TimeoutError:
         content = f"Execution timed out after {timeout} seconds."
         logger.error(f"Snowflake query timed out: {sql}")
     except Exception as e:
-        content = f"Unexpected error: {str(e)}"
-        logger.error(f"Unexpected error executing Snowflake query: {str(e)}")
+        content = f"Unexpected error: {_redact(str(e))}"
+        logger.error(f"Unexpected Snowflake execution error: {type(e).__name__}")
     finally:
         if conn:
             conn.close()

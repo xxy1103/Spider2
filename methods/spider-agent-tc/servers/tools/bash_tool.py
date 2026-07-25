@@ -6,8 +6,15 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Default timeout value
-TIMEOUT = 30  # 30 seconds timeout
-MAX_CHARS = 2000  # Maximum characters to display
+TIMEOUT = 30
+MAX_CHARS = 2000
+
+
+def configure(config):
+    global TIMEOUT, MAX_CHARS
+    settings = config.raw["tools"]["bash"]
+    TIMEOUT = settings["timeout_seconds"]
+    MAX_CHARS = settings["max_output_chars"]
 
 def execute_bash(command: str, work_dir: str = None, **kwargs) -> Dict[str, Any]:
     """
@@ -21,7 +28,6 @@ def execute_bash(command: str, work_dir: str = None, **kwargs) -> Dict[str, Any]
     Returns:
         Dictionary containing the execution result with content and exec_meta keys
     """
-    logger.info(f"Executing bash command: {command}")
     logger.info(f"Working directory: {work_dir}")
     
     try:

@@ -1,11 +1,11 @@
 import argparse
-import asyncio
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from typing import Dict, Any, List
 import logging
 
+from config import load_config
 from servers.utils.tool_registry import ToolRegistry
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -13,8 +13,6 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Tools Server API")
 tool_registry = ToolRegistry()
-
-tool_registry.load_tools()
 
 @app.post("/execute")
 async def execute_tool(request: Request) -> JSONResponse:
@@ -32,7 +30,7 @@ async def execute_tool(request: Request) -> JSONResponse:
         tool_name = tool_call.get("name")
         arguments = tool_call.get("arguments", {})
         
-        logger.info(f"Executing tool: {tool_name} with arguments: {arguments}")
+        logger.info(f"Executing tool: {tool_name}")
         
         if not tool_registry.has_tool(tool_name):
             return JSONResponse(
@@ -45,25 +43,31 @@ async def execute_tool(request: Request) -> JSONResponse:
         return JSONResponse(content=result)
     
     except Exception as e:
-        logger.error(f"Error processing request: {str(e)}", exc_info=True)
+        logger.error(f"Error processing request: {type(e).__name__}")
         return JSONResponse(
             status_code=500,
-            content={"error": f"Internal server error: {str(e)}"}
+            content={"error": f"Internal server error: {type(e).__name__}"}
         )
+
+@app.get("/health")
+async def health() -> dict:
+    return {"status": "ok", "tools": sorted(tool_registry.tools)}
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Tools Server")
-    parser.add_argument("--workers_per_tool", type=int, default=8, help="Number of workers per tool")
-    parser.add_argument("--port", type=int, default=5000, help="Server port")
-    parser.add_argument("--host", type=str, default="0.0.0.0", help="Server host")
+    parser.add_argument("--config", required=True, help="Path to the experiment YAML file")
+    parser.add_argument("--port", required=True, type=int, help="Resolved server port")
+    parser.add_argument("--host", required=True, type=str, help="Server host")
     return parser.parse_args()
 
 def main():
     args = parse_args()
+    config = load_config(args.config)
+    tool_registry.load_tools(config)
+    workers = config.raw["server"]["workers_per_tool"]
+    tool_registry.set_workers_per_tool(workers)
     
-    tool_registry.set_workers_per_tool(args.workers_per_tool)
-    
-    logger.info(f"Starting server on port {args.port} with {args.workers_per_tool} workers per tool")
+    logger.info(f"Starting server on port {args.port} with {workers} workers per tool")
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 
 if __name__ == "__main__":

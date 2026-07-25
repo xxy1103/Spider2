@@ -1,0 +1,59 @@
+experiment:
+  name: mock-smoke-test
+  results_root: methods/spider-agent-tc/results
+  resume: true
+secrets_file: methods/spider-agent-tc/configs/mock.secrets.yaml
+paths:
+  input_file: /mnt/c/Users/ulna/Desktop/Spider2/spider2-snow/spider2-snow.jsonl
+  databases: /mnt/c/Users/ulna/Desktop/Spider2/spider2-snow/resource/databases
+  documents: /mnt/c/Users/ulna/Desktop/Spider2/spider2-snow/resource/documents
+  system_prompt: /mnt/c/Users/ulna/Desktop/Spider2/methods/spider-agent-tc/prompts/spider_agent.txt
+tasks:
+  instance_ids:
+  - sf_bq011
+  index_ranges: []
+  databases: []
+  sample_size: null
+  seed: 42
+  order: seeded_shuffle
+model:
+  name: deepseek-v4-flash
+  temperature: 0
+  top_p: 1
+  max_tokens: 4096
+  request_timeout_seconds: 120
+  retry:
+    max_attempts: 3
+    initial_delay_seconds: 1
+    backoff_multiplier: 2
+    max_delay_seconds: 10
+agent:
+  max_rounds: 10
+  num_threads: 1
+  rollout_number: 1
+server:
+  host: 127.0.0.1
+  preferred_port: 5000
+  workers_per_tool: 2
+  startup_timeout_seconds: 15
+  request_timeout_seconds: 90
+  resolved_port: 5000
+tools:
+  bash:
+    timeout_seconds: 30
+    max_output_chars: 2000
+  snowflake:
+    mode: mock
+    timeout_seconds: 60
+    max_output_chars: 2000
+    mock:
+      response_csv: 'MOCK_RESULT
+
+        1'
+preflight:
+  check_model: true
+  check_snowflake: false
+secrets:
+  model_api:
+    base_url: https://api.deepseek.com
+    api_key: '***REDACTED***'

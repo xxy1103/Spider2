@@ -1,0 +1,16 @@
+{
+  "fingerprint": "64f1114e39ab4f5b92bfe6e4185f35df1e5775162c6b94085c87b00baf9a017d",
+  "created_at": "2026-07-25T10:26:02.174004+00:00",
+  "last_started_at": "2026-07-25T10:26:02.174058+00:00",
+  "config_path": "/mnt/c/Users/ulna/Desktop/Spider2/methods/spider-agent-tc/configs/mock.yaml",
+  "environment": {
+    "python": "3.11.15",
+    "openai": "2.48.0",
+    "requests": "2.34.2",
+    "fastapi": "0.140.0",
+    "uvicorn": "0.51.0",
+    "pandas": "3.0.5",
+    "snowflake-connector-python": "4.7.1",
+    "PyYAML": "6.0.3"
+  }
+}
