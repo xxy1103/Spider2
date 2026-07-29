@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import logging
 import os
 import sys
 import tempfile
@@ -21,6 +22,9 @@ from typing import Any
 
 import yaml
 
+from .progress import TaskProgressReporter
+
+logger = logging.getLogger(__name__)
 
 def _load_evaluate_module(evaluate_py_path: Path):
     """Dynamically load the evaluation suite's evaluate.py module."""
@@ -103,7 +107,7 @@ def extract_sql_answers(exp_dir: Path) -> dict[str, Any]:
             processed_count += 1
             
         except Exception as e:
-            print(f"Error processing {json_file.name}: {e}")
+            logger.error("Error extracting SQL from %s: %s", json_file.name, e)
             skipped_count += 1
     
     return {
@@ -146,10 +150,7 @@ def run_evaluation(
     eval_ids = sorted(set(gold_ids).intersection(pred_ids))
     
     if not eval_ids:
-        print("No tasks to evaluate (no matching instance IDs)")
         return []
-    
-    print(f"Evaluating {len(eval_ids)} task(s)...")
     
     # Create temp directory for results
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -168,33 +169,53 @@ def run_evaluation(
         try:
             os.chdir(eval_suite_dir)
             
-            with ThreadPoolExecutor(max_workers=actual_max_workers) as executor:
-                future_to_id = {
-                    executor.submit(
-                        eval_module.evaluate_single_sql_instance,
-                        instance_id,
-                        eval_standard_dict,
-                        spider2sql_metadata,
-                        submission_dir,
-                        gold_sql_dir,
-                        gold_result_dir,
-                        temp_dir,
-                        result_csv_dir,
-                        timeout,
-                    ): instance_id
-                    for instance_id in eval_ids
-                }
-                
-                for future in as_completed(future_to_id):
-                    result = future.result()
-                    output_results.append(result)
-                    score_emoji = "✅" if result["score"] == 1 else "❌"
-                    print(f"  {score_emoji} {result['instance_id']}: score={result['score']}")
+            with TaskProgressReporter("自动评分", len(eval_ids)) as reporter:
+                with ThreadPoolExecutor(max_workers=actual_max_workers) as executor:
+                    future_to_id = {
+                        executor.submit(
+                            _evaluate_with_progress,
+                            reporter,
+                            eval_module.evaluate_single_sql_instance,
+                            instance_id,
+                            eval_standard_dict,
+                            spider2sql_metadata,
+                            submission_dir,
+                            gold_sql_dir,
+                            gold_result_dir,
+                            temp_dir,
+                            result_csv_dir,
+                            timeout,
+                        ): instance_id
+                        for instance_id in eval_ids
+                    }
+
+                    for future in as_completed(future_to_id):
+                        instance_id = future_to_id[future]
+                        try:
+                            output_results.append(future.result())
+                        except Exception as e:
+                            logger.error(
+                                "Evaluation failed for %s: %s", instance_id, e
+                            )
+                            output_results.append(
+                                {"instance_id": instance_id, "score": 0, "error": str(e)}
+                            )
         
         finally:
             os.chdir(original_cwd)
     
     return output_results
+
+
+def _evaluate_with_progress(reporter, evaluate_one, instance_id, *args):
+    reporter.task_started()
+    try:
+        result = evaluate_one(instance_id, *args)
+        reporter.task_finished(success=result.get("score") == 1)
+        return result
+    except Exception:
+        reporter.task_finished(success=False)
+        raise
 
 
 def collect_conversation_stats(exp_dir: Path) -> dict[str, dict[str, Any]]:
@@ -239,7 +260,7 @@ def collect_conversation_stats(exp_dir: Path) -> dict[str, dict[str, Any]]:
             }
             
         except Exception as e:
-            print(f"Error collecting stats from {json_file.name}: {e}")
+            logger.error("Error collecting stats from %s: %s", json_file.name, e)
     
     return stats
 
@@ -428,31 +449,22 @@ def run_evaluation_and_report(config: Any, summary: dict[str, Any]) -> None:
     """Main entry point for automatic evaluation and report generation."""
     exp_dir = config.experiment_dir
     
-    print("\n" + "=" * 70)
-    print("🔍 自动评分与报告生成")
-    print("=" * 70)
-    
     # Check dependencies first
     deps_ok, missing_deps = _check_evaluation_dependencies()
     if not deps_ok:
-        print(f"\n⚠️  缺少评分依赖: {missing_deps}")
-        print(f"请运行: pip install {missing_deps.replace(', ', ' ')}")
-        print("跳过自动评分\n")
+        logger.warning("Skipping auto evaluation; missing dependencies: %s", missing_deps)
+        print("自动评分已跳过，详情见 run.log")
         return
     
     # Step 1: Extract SQL answers
-    print("\n[1/4] 提取 SQL 答案...")
     extract_result = extract_sql_answers(exp_dir)
-    print(f"  ✅ 提取成功: {extract_result['processed']} 个")
-    if extract_result['skipped'] > 0:
-        print(f"  ⚠️  跳过: {extract_result['skipped']} 个")
     
     if extract_result['processed'] == 0:
-        print("\n⚠️  没有成功提取任何 SQL，跳过评分")
+        logger.warning("Skipping auto evaluation; no SQL answers were extracted")
+        print("自动评分已跳过，详情见 run.log")
         return
     
     # Step 2: Run evaluation
-    print(f"\n[2/4] 运行评分...")
     auto_eval_config = config.raw.get("auto_evaluate", {})
     timeout = auto_eval_config.get("timeout", 300)
     max_workers = auto_eval_config.get("max_workers", 4)
@@ -468,18 +480,8 @@ def run_evaluation_and_report(config: Any, summary: dict[str, Any]) -> None:
     total_evaluated = len(eval_results)
     accuracy = correct_count / total_evaluated * 100 if total_evaluated > 0 else 0
     
-    print(f"\n  📊 评分完成: {correct_count}/{total_evaluated} 正确 ({accuracy:.2f}%)")
-    
     # Step 3: Collect conversation stats
-    print(f"\n[3/4] 收集对话统计...")
     stats = collect_conversation_stats(exp_dir)
-    print(f"  ✅ 统计完成: {len(stats)} 个任务")
     
     # Step 4: Generate report
-    print(f"\n[4/4] 生成报告...")
-    report_path = generate_report(exp_dir, config, summary, eval_results, stats)
-    print(f"  ✅ 报告已生成: {report_path}")
-    
-    print("\n" + "=" * 70)
-    print(f"🎉 自动评分完成！准确率: {accuracy:.2f}%")
-    print("=" * 70 + "\n")
+    generate_report(exp_dir, config, summary, eval_results, stats)

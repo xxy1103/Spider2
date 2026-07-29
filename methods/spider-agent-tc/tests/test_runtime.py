@@ -10,7 +10,7 @@ sys.path.insert(0, str(TC_ROOT))
 
 from agent.llm_agent import LLMAgent
 from config import ConfigError, LoadedConfig
-from run import find_available_port, prepare_experiment, stop_server
+from run import find_available_port, prepare_experiment, start_server, stop_server
 
 
 def test_port_falls_back_when_preferred_is_busy():
@@ -43,6 +43,23 @@ def test_stop_server_kills_process_that_does_not_terminate():
     process.terminate.assert_called_once()
     process.kill.assert_called_once()
     assert process.wait.call_count == 2
+
+
+def test_start_server_redirects_output_to_experiment_log(tmp_path, monkeypatch):
+    popen = Mock()
+    monkeypatch.setattr("run.subprocess.Popen", popen)
+    config = SimpleNamespace(
+        config_path=tmp_path / "config.yaml",
+        experiment_dir=tmp_path,
+        raw={"server": {"host": "127.0.0.1"}},
+    )
+
+    start_server(config, 5000)
+
+    kwargs = popen.call_args.kwargs
+    assert kwargs["stderr"] == -2
+    assert kwargs["stdout"].name == str(tmp_path / "run.log")
+    assert kwargs["stdout"].closed is True
 
 
 def runtime_config(tmp_path, fingerprint="same", resume=True):
@@ -112,7 +129,7 @@ def test_model_retry_stops_after_configured_attempts(monkeypatch, tmp_path, caps
         top_p=1,
         max_new_tokens=10,
     )
-    monkeypatch.setattr("agent.llm_agent.OpenAI", Mock)
+    monkeypatch.setattr("agent.langgraph_agent.OpenAI", Mock)
     agent = LLMAgent(args)
     create = agent.model_client.chat.completions.create
     create.side_effect = RuntimeError("secret should not be printed")

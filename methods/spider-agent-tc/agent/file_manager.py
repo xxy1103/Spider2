@@ -1,8 +1,11 @@
 import json
+import logging
 import os
 import threading
 import glob
 from collections import defaultdict
+
+logger = logging.getLogger(__name__)
 
 class FileManager:
     def __init__(self, args):
@@ -29,7 +32,7 @@ class FileManager:
                 data = json.load(f)
                 return data if isinstance(data, list) else [data]
         except Exception as e:
-            print(f"Error loading {file_path}: {e}")
+            logger.exception("Error loading %s: %s", file_path, e)
             return []
     
     def save_instance_results(self, instance_id, results):
@@ -40,9 +43,8 @@ class FileManager:
         try:
             with open(file_path, 'w', encoding='utf-8') as f:
                 json.dump(results, f, ensure_ascii=False, indent=2)
-            print(f"Saved results to: {file_path}")
         except Exception as e:
-            print(f"Error saving to {file_path}: {e}")
+            logger.exception("Error saving %s: %s", file_path, e)
     
     def add_single_result(self, result):
         """Add a single result to the appropriate instance file"""
@@ -59,7 +61,6 @@ class FileManager:
     def load_existing_results(self):
         """Load existing results from all instance files"""
         if not os.path.exists(self.args.output_folder):
-            print("Output folder does not exist, starting fresh")
             return []
             
         all_results = []
@@ -82,9 +83,7 @@ class FileManager:
                 self.processed_instances[instance_id] = terminated_count
                         
             except Exception as e:
-                print(f"Error processing {file_path}: {e}")
+                logger.exception("Error processing %s: %s", file_path, e)
                 continue
-        
-        total_valid = sum(self.processed_instances.values())
-        print(f"Found {total_valid} valid (terminated) results for {len(self.processed_instances)} unique instances")
+
         return all_results

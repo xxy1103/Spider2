@@ -6,6 +6,7 @@ from typing import Dict, Any, List
 import logging
 
 from config import load_config
+from safe_logging import RedactingFilter, configured_sensitive_values
 from servers.utils.tool_registry import ToolRegistry
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -63,6 +64,9 @@ def parse_args():
 def main():
     args = parse_args()
     config = load_config(args.config)
+    redacting_filter = RedactingFilter(configured_sensitive_values(config))
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(redacting_filter)
     tool_registry.load_tools(config)
     workers = config.raw["server"]["workers_per_tool"]
     tool_registry.set_workers_per_tool(workers)

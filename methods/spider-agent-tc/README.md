@@ -86,6 +86,9 @@ The directory contains per-task conversation JSON files plus:
 - `run-manifest.json`: configuration fingerprint and environment versions;
 - `run-summary.json`: completion summary;
 - `failed-tasks.json`: IDs that did not complete every requested rollout.
+- `run.log`: detailed Agent, tool-server, and evaluation diagnostics. The
+  terminal stays focused on aggregate progress and writes credential-redacted
+  details here.
 
 The process exits with status 1 when any selected task remains incomplete, status
 2 for configuration or startup failures, and status 130 when interrupted.

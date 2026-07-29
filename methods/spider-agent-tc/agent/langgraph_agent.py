@@ -11,6 +11,7 @@ StateGraph, while preserving the original agent behavior:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from collections import defaultdict
@@ -30,8 +31,10 @@ from openai import OpenAI
 
 from .file_manager import FileManager
 from .message_processor import MessageProcessor
+from .progress import TaskProgressReporter
 from .prompt_builders import get_prompt_builder
 
+logger = logging.getLogger(__name__)
 
 # OpenAI tool schema definitions. These mirror the tools previously described
 # in the system prompt's <tools> XML block. Descriptions are kept aligned with
@@ -154,9 +157,14 @@ class LangGraphAgent:
                 instance_info = f" for {instance_id}" if instance_id else ""
                 round_info = f" (round {round_num})" if round_num is not None else ""
                 safe_message = str(e).replace(self.args.model_api_key, "***REDACTED***")
-                print(
-                    f"LLM Error{instance_info}{round_info}: {type(e).__name__}: {safe_message}. "
-                    f"Attempt {attempt}/{max_attempts} failed."
+                logger.warning(
+                    "LLM error%s%s: %s: %s. Attempt %s/%s failed.",
+                    instance_info,
+                    round_info,
+                    type(e).__name__,
+                    safe_message,
+                    attempt,
+                    max_attempts,
                 )
                 if attempt >= max_attempts:
                     raise
@@ -212,10 +220,6 @@ class LangGraphAgent:
     def _call_model_node(self, state: AgentState) -> dict[str, Any]:
         instance_id = state["item"]["instance_id"]
         round_num = state["round_num"] + 1
-        print(
-            f"Processing {instance_id} round {round_num}"
-        )
-
         openai_messages = self._to_openai_messages(state["messages"])
 
         try:
@@ -361,9 +365,11 @@ class LangGraphAgent:
         instance_id = item["instance_id"]
 
         if self.processed_instances[instance_id] >= self.args.rollout_number:
-            print(
-                f"Skipping {instance_id} rollout {rollout_idx + 1} "
-                f"(already completed {self.processed_instances[instance_id]} valid rollouts)"
+            logger.info(
+                "Skipping %s rollout %s (already completed %s valid rollouts)",
+                instance_id,
+                rollout_idx + 1,
+                self.processed_instances[instance_id],
             )
             return None
 
@@ -391,7 +397,6 @@ class LangGraphAgent:
             terminated = final_state.get("terminated", False)
 
             if error:
-                print(f"Failed to get valid LLM response for {instance_id}")
                 error_result = {
                     "instance_id": instance_id,
                     "rollout_idx": rollout_idx,
@@ -412,11 +417,6 @@ class LangGraphAgent:
 
             self.file_manager.add_single_result(result)
 
-            status = "TERMINATED" if terminated else "INCOMPLETE"
-            print(
-                f"Completed: {instance_id} "
-                f"(rollout {rollout_idx + 1}/{self.args.rollout_number}) - {status}"
-            )
             return result
 
         except Exception as e:  # noqa: BLE001
@@ -427,8 +427,26 @@ class LangGraphAgent:
                 "terminated": False,
             }
             self.file_manager.add_single_result(error_result)
-            print(f"Error processing {instance_id} rollout {rollout_idx + 1}: {str(e)}")
+            safe_message = str(e).replace(self.args.model_api_key, "***REDACTED***")
+            logger.error(
+                "Error processing %s rollout %s: %s",
+                instance_id,
+                rollout_idx + 1,
+                safe_message,
+            )
             return error_result
+
+    def _run_progress_task(self, reporter, item, rollout_idx):
+        reporter.task_started()
+        try:
+            result = self.process_single_item(item, rollout_idx)
+            reporter.task_finished(
+                success=bool(result and result.get("terminated") is True)
+            )
+            return result
+        except Exception:
+            reporter.task_finished(success=False)
+            raise
 
     def run(self, items):
         """Main execution function (interface preserved)."""
@@ -443,46 +461,27 @@ class LangGraphAgent:
             for rollout_idx in range(current_valid_rollouts, self.args.rollout_number):
                 tasks_to_process.append((item, rollout_idx))
 
-        total_expected = len(items) * self.args.rollout_number
-        total_existing = sum(self.processed_instances.values())
-
-        print(f"Total items: {len(items)}")
-        print(f"Rollout number: {self.args.rollout_number}")
-        print(f"Prompt strategy: {self.args.prompt_strategy}")
-        print(f"Total expected tasks: {total_expected}")
-        print(f"Valid completed tasks: {total_existing}")
-        print(f"Tasks to process: {len(tasks_to_process)}")
-
         if not tasks_to_process:
-            print("All rollouts have been completed successfully!")
+            with TaskProgressReporter("Agent", 0):
+                pass
             return self.build_summary(items)
 
-        completed_count = 0
-        with ThreadPoolExecutor(max_workers=self.args.num_threads) as executor:
-            future_to_task = {
-                executor.submit(self.process_single_item, item, rollout_idx): (
-                    item,
-                    rollout_idx,
-                )
-                for item, rollout_idx in tasks_to_process
-            }
-            for future in as_completed(future_to_task):
-                item, rollout_idx = future_to_task[future]
-                try:
-                    result = future.result()
-                    if result is not None:
-                        completed_count += 1
-                        print(
-                            f"Progress: {completed_count}/{len(tasks_to_process)} completed"
-                        )
-                except Exception as e:  # noqa: BLE001
-                    print(
-                        f"Unexpected error processing {item['instance_id']} "
-                        f"rollout {rollout_idx + 1}: {str(e)}"
+        with TaskProgressReporter("Agent", len(tasks_to_process)) as reporter:
+            with ThreadPoolExecutor(max_workers=self.args.num_threads) as executor:
+                futures = [
+                    executor.submit(
+                        self._run_progress_task, reporter, item, rollout_idx
                     )
+                    for item, rollout_idx in tasks_to_process
+                ]
+                for future in as_completed(futures):
+                    try:
+                        future.result()
+                    except Exception as exc:
+                        logger.error(
+                            "Unexpected worker failure: %s", type(exc).__name__
+                        )
 
-        print(f"All processing completed! Results saved to: {self.args.output_folder}")
-        print(f"Total processed in this run: {completed_count}")
         return self.build_summary(items)
 
     def build_summary(self, items):

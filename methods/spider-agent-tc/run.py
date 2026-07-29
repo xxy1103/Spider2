@@ -6,6 +6,7 @@ import argparse
 import importlib.metadata
 import importlib.util
 import json
+import logging
 import os
 import socket
 import subprocess
@@ -20,7 +21,9 @@ import requests
 import yaml
 
 from config import ConfigError, LoadedConfig, load_config, redacted_effective_config
+from safe_logging import RedactingFilter, configured_sensitive_values
 
+logger = logging.getLogger(__name__)
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run Spider Agent TC from one YAML configuration")
@@ -85,6 +88,7 @@ def check_dependencies() -> None:
         "pandas": "pandas",
         "PyYAML": "yaml",
         "requests": "requests",
+        "rich": "rich",
         "snowflake-connector-python": "snowflake.connector",
         "uvicorn": "uvicorn",
         "langgraph": "langgraph",
@@ -129,27 +133,20 @@ def check_model(config: LoadedConfig) -> None:
 
 
 def run_preflight(config: LoadedConfig, port: int) -> None:
-    print(f"Selected {len(config.selected_items)} task(s)")
-    snowflake_mode = config.raw["tools"]["snowflake"]["mode"]
-    print(f"Snowflake tool mode: {snowflake_mode.upper()}")
-    print(f"Tool server will use {config.raw['server']['host']}:{port}")
-    print("Checking Python dependencies...")
+    print("预检中...")
     check_dependencies()
-    print("Python dependencies are ready")
     if config.raw["preflight"]["check_snowflake"]:
-        print("Checking Snowflake connection...")
         check_snowflake(config)
-        print("Snowflake connection is ready")
     if config.raw["preflight"]["check_model"]:
-        print("Checking model connection...")
         check_model(config)
-        print("Model connection is ready")
+    print("预检就绪")
 
 
 def _environment_versions() -> dict[str, str]:
     packages = [
         "openai",
         "requests",
+        "rich",
         "fastapi",
         "uvicorn",
         "pandas",
@@ -230,7 +227,17 @@ def start_server(config: LoadedConfig, port: int) -> subprocess.Popen:
         "--port",
         str(port),
     ]
-    return subprocess.Popen(command, cwd=Path(__file__).resolve().parent)
+    log_path = config.experiment_dir / "run.log"
+    log_handle = log_path.open("a", encoding="utf-8")
+    try:
+        return subprocess.Popen(
+            command,
+            cwd=Path(__file__).resolve().parent,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+        )
+    finally:
+        log_handle.close()
 
 
 def wait_for_server(config: LoadedConfig, port: int, process: subprocess.Popen) -> None:
@@ -287,6 +294,21 @@ def build_agent_args(config: LoadedConfig, port: int) -> SimpleNamespace:
     )
 
 
+def configure_file_logging(config: LoadedConfig) -> Path:
+    """Send application diagnostics to the experiment log, not the terminal."""
+    log_path = config.experiment_dir / "run.log"
+    handler = logging.FileHandler(log_path, encoding="utf-8")
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    )
+    handler.addFilter(RedactingFilter(configured_sensitive_values(config)))
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.addHandler(handler)
+    root_logger.setLevel(logging.INFO)
+    return log_path
+
+
 def write_summary(config: LoadedConfig, summary: dict[str, Any]) -> None:
     summary["snowflake_mode"] = config.raw["tools"]["snowflake"]["mode"]
     summary["mock_run"] = config.raw["tools"]["snowflake"]["mode"] == "mock"
@@ -305,11 +327,14 @@ def execute(config: LoadedConfig) -> int:
     port = find_available_port(config.raw["server"]["host"], config.raw["server"]["preferred_port"])
     run_preflight(config, port)
     prepare_experiment(config, port)
+    log_path = configure_file_logging(config)
 
     process = None
     try:
+        print("工具服务启动中...")
         process = start_server(config, port)
         wait_for_server(config, port, process)
+        print("工具服务就绪")
         from agent.main import run_agent
 
         summary = run_agent(build_agent_args(config, port), config.selected_items)
@@ -322,13 +347,13 @@ def execute(config: LoadedConfig) -> int:
                 from agent.auto_evaluator import run_evaluation_and_report
                 run_evaluation_and_report(config, summary)
             except Exception as e:
-                print(f"\n⚠️  Warning: Auto evaluation failed: {e}", file=sys.stderr)
-                print("Agent run results are still valid.\n", file=sys.stderr)
+                logger.error("Auto evaluation failed: %s", _safe_error(e, config))
+                print(f"自动评分失败，详情见 {log_path}", file=sys.stderr)
         
         if summary["failed_instance_ids"]:
-            print(f"Run completed with {len(summary['failed_instance_ids'])} failed task(s)")
+            print(f"运行结束，详情见 {log_path}")
             return 1
-        print("Run completed successfully")
+        print(f"运行成功，详情见 {log_path}")
         return 0
     finally:
         stop_server(process)
