@@ -92,6 +92,11 @@ JSON files plus:
   terminal stays focused on aggregate progress and writes credential-redacted
   details here.
 
+Each per-task conversation JSON file is refreshed atomically after every
+completed Agent graph step. Its current rollout record has
+`"in_progress": true` while the task is running and changes to `false` after
+the rollout finishes, so the file can be watched safely during execution.
+
 The process exits with status 1 when any selected task remains incomplete, status
 2 for configuration or startup failures, and status 130 when interrupted.
 

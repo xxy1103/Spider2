@@ -4,6 +4,7 @@ import os
 import threading
 import glob
 from collections import defaultdict
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -36,15 +37,52 @@ class FileManager:
             return []
     
     def save_instance_results(self, instance_id, results):
-        """Save all results for a specific instance"""
-        file_path = self.get_instance_file_path(instance_id)
+        """Atomically save all results for a specific instance."""
+        file_path = Path(self.get_instance_file_path(instance_id))
         os.makedirs(self.args.output_folder, exist_ok=True)
-        
+        temporary_path = file_path.with_name(
+            f".{file_path.name}.{threading.get_ident()}.tmp"
+        )
+
         try:
-            with open(file_path, 'w', encoding='utf-8') as f:
+            with open(temporary_path, 'w', encoding='utf-8') as f:
                 json.dump(results, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temporary_path, file_path)
         except Exception as e:
             logger.exception("Error saving %s: %s", file_path, e)
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                logger.warning("Could not remove temporary result file %s", temporary_path)
+
+    def upsert_rollout_result(self, result):
+        """Insert or refresh one rollout without duplicating progress snapshots."""
+        instance_id = result["instance_id"]
+        rollout_idx = result["rollout_idx"]
+
+        with self.file_locks[instance_id]:
+            existing_results = self.load_instance_results(instance_id)
+            previous_result = None
+            for index, existing in enumerate(existing_results):
+                if (
+                    isinstance(existing, dict)
+                    and existing.get("rollout_idx") == rollout_idx
+                ):
+                    previous_result = existing
+                    existing_results[index] = result
+                    break
+            else:
+                existing_results.append(result)
+
+            self.save_instance_results(instance_id, existing_results)
+
+            was_terminated = bool(
+                previous_result and self.check_if_terminated(previous_result)
+            )
+            if self.check_if_terminated(result) and not was_terminated:
+                self.processed_instances[instance_id] += 1
     
     def add_single_result(self, result):
         """Add a single result to the appropriate instance file"""

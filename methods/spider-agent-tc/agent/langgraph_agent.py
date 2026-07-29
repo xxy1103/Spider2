@@ -361,8 +361,31 @@ class LangGraphAgent:
     # ------------------------------------------------------------------
     # Item processing (interface preserved from legacy LLMAgent)
     # ------------------------------------------------------------------
+    def _result_from_state(
+        self,
+        state: AgentState,
+        rollout_idx: int,
+        *,
+        in_progress: bool,
+    ) -> dict[str, Any]:
+        """Build the persisted rollout record for a graph state."""
+        result = {
+            "instance_id": state["item"]["instance_id"],
+            "rollout_idx": rollout_idx,
+            "conversation": state["conversation_history"],
+            "final_messages": self._to_openai_messages(state["messages"]),
+            "terminated": state.get("terminated", False),
+            "in_progress": in_progress,
+            "round_num": state.get("round_num", 0),
+        }
+        if state.get("error"):
+            result["error"] = state["error"]
+            result["round_failed"] = state.get("round_num", 0)
+        return result
+
     def process_single_item(self, item, rollout_idx):
         instance_id = item["instance_id"]
+        last_state: AgentState | None = None
 
         if self.processed_instances[instance_id] >= self.args.rollout_number:
             logger.info(
@@ -391,43 +414,49 @@ class LangGraphAgent:
                 "error": None,
             }
 
-            final_state = self.graph.invoke(initial_state)
+            final_state = initial_state
+            last_state = initial_state
+            for current_state in self.graph.stream(
+                initial_state, stream_mode="values"
+            ):
+                final_state = current_state
+                last_state = current_state
+                progress_result = self._result_from_state(
+                    current_state,
+                    rollout_idx,
+                    in_progress=True,
+                )
+                self.file_manager.upsert_rollout_result(progress_result)
 
-            error = final_state.get("error")
-            terminated = final_state.get("terminated", False)
-
-            if error:
-                error_result = {
-                    "instance_id": instance_id,
-                    "rollout_idx": rollout_idx,
-                    "error": error,
-                    "round_failed": final_state.get("round_num", 0),
-                    "terminated": False,
-                }
-                self.file_manager.add_single_result(error_result)
-                return error_result
-
-            result = {
-                "instance_id": instance_id,
-                "rollout_idx": rollout_idx,
-                "conversation": final_state["conversation_history"],
-                "final_messages": self._to_openai_messages(final_state["messages"]),
-                "terminated": terminated,
-            }
-
-            self.file_manager.add_single_result(result)
+            result = self._result_from_state(
+                final_state,
+                rollout_idx,
+                in_progress=False,
+            )
+            self.file_manager.upsert_rollout_result(result)
 
             return result
 
         except Exception as e:  # noqa: BLE001
-            error_result = {
-                "instance_id": instance_id,
-                "rollout_idx": rollout_idx,
-                "error": str(e),
-                "terminated": False,
-            }
-            self.file_manager.add_single_result(error_result)
             safe_message = str(e).replace(self.args.model_api_key, "***REDACTED***")
+            if last_state is not None:
+                error_result = self._result_from_state(
+                    last_state,
+                    rollout_idx,
+                    in_progress=False,
+                )
+                error_result["error"] = safe_message
+                error_result["terminated"] = False
+                error_result["round_failed"] = last_state.get("round_num", 0)
+            else:
+                error_result = {
+                    "instance_id": instance_id,
+                    "rollout_idx": rollout_idx,
+                    "error": safe_message,
+                    "terminated": False,
+                    "in_progress": False,
+                }
+            self.file_manager.upsert_rollout_result(error_result)
             logger.error(
                 "Error processing %s rollout %s: %s",
                 instance_id,
