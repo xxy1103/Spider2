@@ -23,10 +23,12 @@ def test_non_tty_reports_plain_text_snapshots():
         reporter.task_started()
         reporter.task_finished(success=False)
 
-    assert output.getvalue().splitlines() == [
-        "Agent: 已结束 1/2  进行中 0  成功 1  失败 0",
-        "Agent: 已结束 2/2  进行中 0  成功 1  失败 1",
-    ]
+    lines = output.getvalue().splitlines()
+    assert lines[0].startswith("Agent: 已结束 1/2  进行中 0  成功 1  失败 0")
+    assert lines[1].startswith("Agent: 已结束 2/2  进行中 0  成功 1  失败 1")
+    assert all("已运行 " in line for line in lines)
+    assert all("速度 " in line for line in lines)
+    assert all("平均 " not in line for line in lines)
     assert "\x1b" not in output.getvalue()
     assert reporter.snapshot.completed == 2
     assert reporter.snapshot.successful == 1
@@ -71,6 +73,28 @@ def test_terminal_progress_contains_requested_fields():
     assert "进行中 0" in rendered
     assert "成功 1" in rendered
     assert "失败 0" in rendered
+    assert "已运行 " in rendered
+    assert "速度 " in rendered
+    assert "平均 " not in rendered
+
+
+def test_progress_calculates_completion_rate(monkeypatch):
+    output = io.StringIO()
+    clock_values = iter([100.0, 160.0, 160.0])
+    monkeypatch.setattr("agent.progress.time.monotonic", lambda: next(clock_values))
+
+    with TaskProgressReporter(
+        "Agent", 1, stream=output, is_terminal=False
+    ) as reporter:
+        reporter.task_started()
+        reporter.task_finished(success=True)
+
+    snapshot = reporter.snapshot
+    assert snapshot.elapsed_seconds == 60
+    assert snapshot.tasks_per_hour == 60
+    assert "已运行 01:00" in output.getvalue()
+    assert "速度 60.00 题/小时" in output.getvalue()
+    assert "平均 " not in output.getvalue()
 
 
 def test_evaluation_progress_counts_zero_score_as_failure():
