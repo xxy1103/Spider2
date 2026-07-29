@@ -1,6 +1,16 @@
-Evaluating SQL:   0%|                                    | 0/1 [00:00<?, ?it/s]Evaluating SQL: 100%|############################| 1/1 [00:12<00:00, 12.26s/it]Evaluating SQL: 100%|############################| 1/1 [00:12<00:00, 12.26s/it]
-{'sf_bq011': 1}
-Final score: 1.0, Correct examples: 1, Total examples: 1
-Real score: 0.0018281535648994515, Correct examples: 1, Total examples: 547
-Execution results saved to: ../../methods/spider-agent-tc/results/smoke-test-pro-submission_csv
-Correct IDs saved to: ../../methods/spider-agent-tc/results\smoke-test-pro-submission.csv
+Evaluating 1 task(s)...
+  ✅ sf_bq011: score=1
+
+  📊 评分完成: 1/1 正确 (100.00%)
+
+[3/4] 收集对话统计...
+  ✅ 统计完成: 1 个任务
+
+[4/4] 生成报告...
+  ✅ 报告已生成: /mnt/c/Users/ulna/Desktop/Spider2/methods/spider-agent-tc/results/smoke-test-pro/REPORT.md
+
+======================================================================
+🎉 自动评分完成！准确率: 100.00%
+======================================================================
+
+Run completed successfully

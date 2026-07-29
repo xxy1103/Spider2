@@ -16,3 +16,6 @@ dependencies:
       - langgraph>=0.2.0
       - langchain-core>=0.3.0
       - langchain-openai>=0.2.0
+      # 自动评分依赖（可选）
+      - google-cloud-bigquery
+      - db-dtypes

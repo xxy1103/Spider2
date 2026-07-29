@@ -406,6 +406,24 @@ def generate_report(
     return report_path
 
 
+def _check_evaluation_dependencies() -> tuple[bool, str | None]:
+    """Check if evaluation dependencies are available."""
+    missing = []
+    try:
+        import google.cloud.bigquery  # noqa: F401
+    except ImportError:
+        missing.append("google-cloud-bigquery")
+    
+    try:
+        import snowflake.connector  # noqa: F401
+    except ImportError:
+        missing.append("snowflake-connector-python")
+    
+    if missing:
+        return False, ", ".join(missing)
+    return True, None
+
+
 def run_evaluation_and_report(config: Any, summary: dict[str, Any]) -> None:
     """Main entry point for automatic evaluation and report generation."""
     exp_dir = config.experiment_dir
@@ -413,6 +431,14 @@ def run_evaluation_and_report(config: Any, summary: dict[str, Any]) -> None:
     print("\n" + "=" * 70)
     print("🔍 自动评分与报告生成")
     print("=" * 70)
+    
+    # Check dependencies first
+    deps_ok, missing_deps = _check_evaluation_dependencies()
+    if not deps_ok:
+        print(f"\n⚠️  缺少评分依赖: {missing_deps}")
+        print(f"请运行: pip install {missing_deps.replace(', ', ' ')}")
+        print("跳过自动评分\n")
+        return
     
     # Step 1: Extract SQL answers
     print("\n[1/4] 提取 SQL 答案...")
