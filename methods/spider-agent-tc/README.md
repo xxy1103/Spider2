@@ -76,10 +76,12 @@ local port, and runs the selected task.
 Results are written to:
 
 ```text
-results/smoke-test/
+results/smoke-test/YYYYMMDD-HHMMSS/
 ```
 
-The directory contains per-task conversation JSON files plus:
+`experiment.name` identifies an experiment group. Every completed invocation
+gets its own timestamped run directory, which contains per-task conversation
+JSON files plus:
 
 - `effective-config.yaml`: resolved configuration with secrets redacted;
 - `selected-tasks.json`: exact task order;
@@ -182,13 +184,14 @@ model request.
 
 ## Resume behavior
 
-With `experiment.resume: true`, tasks with the requested number of terminated
-rollouts are skipped. Failed and incomplete tasks run again.
+With `experiment.resume: true`, the launcher resumes the newest timestamped run
+that has the same configuration fingerprint and no `run-summary.json`. Tasks
+with the requested number of terminated rollouts are skipped, while failed and
+incomplete tasks run again. Once a run writes its summary, the next invocation
+creates a new timestamped directory. With `resume: false`, every invocation
+creates a new timestamped directory.
 
-The experiment directory stores a fingerprint of the configuration and selected
-task order. Reusing an experiment name with a different configuration is rejected;
-choose a new `experiment.name` instead. With `resume: false`, an existing nonempty
-experiment directory is always rejected.
+Older flat result directories remain readable and are not moved automatically.
 
 ## Configuration reference
 

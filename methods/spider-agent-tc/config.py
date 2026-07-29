@@ -9,6 +9,7 @@ import random
 import re
 import sys
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -28,11 +29,16 @@ class LoadedConfig:
     paths: dict[str, Path]
     selected_items: list[dict[str, Any]]
     fingerprint: str
+    run_dir: Path | None = None
+
+    @property
+    def experiment_group_dir(self) -> Path:
+        experiment = self.raw["experiment"]
+        return (self.repo_root / experiment["results_root"] / experiment["name"]).resolve()
 
     @property
     def experiment_dir(self) -> Path:
-        experiment = self.raw["experiment"]
-        return (self.repo_root / experiment["results_root"] / experiment["name"]).resolve()
+        return self.run_dir or self.experiment_group_dir
 
 
 _SCHEMA = {
@@ -376,6 +382,49 @@ def redacted_effective_config(config: LoadedConfig, *, resolved_port: int | None
     return snapshot
 
 
+_RUN_DIR_PATTERN = re.compile(r"\d{8}-\d{6}(?:-\d{2})?")
+
+
+def select_experiment_run_dir(
+    group_dir: Path,
+    *,
+    resume: bool,
+    fingerprint: str,
+    now: datetime | None = None,
+) -> Path:
+    """Select an interrupted matching run or allocate a new timestamped run."""
+    if resume and group_dir.is_dir():
+        candidates = sorted(
+            (
+                path
+                for path in group_dir.iterdir()
+                if path.is_dir() and _RUN_DIR_PATTERN.fullmatch(path.name)
+            ),
+            key=lambda path: path.name,
+            reverse=True,
+        )
+        for candidate in candidates:
+            if (candidate / "run-summary.json").is_file():
+                continue
+            manifest_path = candidate / "run-manifest.json"
+            if not manifest_path.is_file():
+                continue
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if manifest.get("fingerprint") == fingerprint:
+                return candidate
+
+    timestamp = (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
+    candidate = group_dir / timestamp
+    suffix = 1
+    while candidate.exists():
+        candidate = group_dir / f"{timestamp}-{suffix:02d}"
+        suffix += 1
+    return candidate
+
+
 def load_config(config_path: str | Path) -> LoadedConfig:
     path = Path(config_path).expanduser().resolve()
     raw = _read_yaml(path, "Configuration file")
@@ -430,6 +479,14 @@ def load_config(config_path: str | Path) -> LoadedConfig:
     fingerprint = hashlib.sha256(
         json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
+    group_dir = (
+        repo_root / raw["experiment"]["results_root"] / raw["experiment"]["name"]
+    ).resolve()
+    run_dir = select_experiment_run_dir(
+        group_dir,
+        resume=raw["experiment"]["resume"],
+        fingerprint=fingerprint,
+    )
     return LoadedConfig(
         config_path=path,
         repo_root=repo_root,
@@ -438,4 +495,5 @@ def load_config(config_path: str | Path) -> LoadedConfig:
         paths=paths,
         selected_items=selected,
         fingerprint=fingerprint,
+        run_dir=run_dir,
     )

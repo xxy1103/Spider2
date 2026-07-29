@@ -1,5 +1,7 @@
 import copy
+import json
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -15,6 +17,7 @@ from config import (
     _validate_main,
     _validate_secrets,
     redacted_effective_config,
+    select_experiment_run_dir,
     select_tasks,
 )
 
@@ -43,6 +46,79 @@ def task_config(**overrides):
     }
     value.update(overrides)
     return value
+
+
+def test_new_run_uses_timestamped_directory(tmp_path):
+    selected = select_experiment_run_dir(
+        tmp_path / "experiment",
+        resume=False,
+        fingerprint="fingerprint",
+        now=datetime(2026, 7, 29, 19, 30, 45),
+    )
+
+    assert selected == tmp_path / "experiment" / "20260729-193045"
+
+
+def test_new_run_avoids_same_second_collision(tmp_path):
+    group = tmp_path / "experiment"
+    (group / "20260729-193045").mkdir(parents=True)
+
+    selected = select_experiment_run_dir(
+        group,
+        resume=False,
+        fingerprint="fingerprint",
+        now=datetime(2026, 7, 29, 19, 30, 45),
+    )
+
+    assert selected == group / "20260729-193045-01"
+
+
+def test_resume_selects_latest_matching_interrupted_run(tmp_path):
+    group = tmp_path / "experiment"
+    older = group / "20260729-190000"
+    latest = group / "20260729-193000"
+    older.mkdir(parents=True)
+    latest.mkdir()
+    (older / "run-manifest.json").write_text(
+        json.dumps({"fingerprint": "fingerprint"}), encoding="utf-8"
+    )
+    (older / "run-summary.json").write_text("{}", encoding="utf-8")
+    (latest / "run-manifest.json").write_text(
+        json.dumps({"fingerprint": "fingerprint"}), encoding="utf-8"
+    )
+
+    selected = select_experiment_run_dir(
+        group,
+        resume=True,
+        fingerprint="fingerprint",
+        now=datetime(2026, 7, 29, 20, 0, 0),
+    )
+
+    assert selected == latest
+
+
+def test_resume_does_not_reuse_completed_or_changed_run(tmp_path):
+    group = tmp_path / "experiment"
+    completed = group / "20260729-193000"
+    changed = group / "20260729-194000"
+    completed.mkdir(parents=True)
+    changed.mkdir()
+    (completed / "run-manifest.json").write_text(
+        json.dumps({"fingerprint": "fingerprint"}), encoding="utf-8"
+    )
+    (completed / "run-summary.json").write_text("{}", encoding="utf-8")
+    (changed / "run-manifest.json").write_text(
+        json.dumps({"fingerprint": "different"}), encoding="utf-8"
+    )
+
+    selected = select_experiment_run_dir(
+        group,
+        resume=True,
+        fingerprint="fingerprint",
+        now=datetime(2026, 7, 29, 20, 0, 0),
+    )
+
+    assert selected == group / "20260729-200000"
 
 
 def test_smoke_config_schema_is_valid():

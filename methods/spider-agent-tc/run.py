@@ -203,6 +203,8 @@ def prepare_experiment(config: LoadedConfig, port: int) -> None:
     )
     manifest = {
         "fingerprint": config.fingerprint,
+        "experiment_name": config.raw["experiment"]["name"],
+        "run_id": output_dir.name,
         "created_at": (
             json.loads(manifest_path.read_text(encoding="utf-8")).get("created_at")
             if manifest_path.is_file()

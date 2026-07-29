@@ -46,7 +46,7 @@ def _load_evaluate_module(evaluate_py_path: Path):
 
 def extract_sql_answers(exp_dir: Path) -> dict[str, Any]:
     """Extract SQL answers from terminated records (reuse convert_to_submission_format logic)."""
-    submission_dir = exp_dir.parent / f"{exp_dir.name}-submission"
+    submission_dir = exp_dir / "submission"
     submission_dir.mkdir(parents=True, exist_ok=True)
     
     json_files = list(exp_dir.glob("*.json"))
@@ -154,7 +154,7 @@ def run_evaluation(
     
     # Create temp directory for results
     with tempfile.TemporaryDirectory() as temp_dir:
-        result_csv_dir = submission_dir.parent / f"{submission_dir.name}_csv"
+        result_csv_dir = submission_dir.parent / "submission_csv"
         if result_csv_dir.exists():
             import shutil
             shutil.rmtree(result_csv_dir)
