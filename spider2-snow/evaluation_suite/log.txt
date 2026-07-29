@@ -1,0 +1,6 @@
+Evaluating SQL:   0%|                                    | 0/1 [00:00<?, ?it/s]Evaluating SQL: 100%|############################| 1/1 [00:12<00:00, 12.26s/it]Evaluating SQL: 100%|############################| 1/1 [00:12<00:00, 12.26s/it]
+{'sf_bq011': 1}
+Final score: 1.0, Correct examples: 1, Total examples: 1
+Real score: 0.0018281535648994515, Correct examples: 1, Total examples: 547
+Execution results saved to: ../../methods/spider-agent-tc/results/smoke-test-pro-submission_csv
+Correct IDs saved to: ../../methods/spider-agent-tc/results\smoke-test-pro-submission.csv

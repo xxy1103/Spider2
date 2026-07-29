@@ -1,8 +1,8 @@
 experiment:
-  name: mock-smoke-test
+  name: smoke-test-pro
   results_root: methods/spider-agent-tc/results
   resume: true
-secrets_file: methods/spider-agent-tc/configs/mock.secrets.yaml
+secrets_file: methods/spider-agent-tc/configs/secrets.yaml
 paths:
   input_file: /mnt/c/Users/ulna/Desktop/Spider2/spider2-snow/spider2-snow.jsonl
   databases: /mnt/c/Users/ulna/Desktop/Spider2/spider2-snow/resource/databases
@@ -17,10 +17,10 @@ tasks:
   seed: 42
   order: seeded_shuffle
 model:
-  name: deepseek-v4-flash
+  name: deepseek-v4-pro
   temperature: 0
   top_p: 1
-  max_tokens: 4096
+  max_tokens: 100000
   request_timeout_seconds: 120
   retry:
     max_attempts: 3
@@ -28,7 +28,7 @@ model:
     backoff_multiplier: 2
     max_delay_seconds: 10
 agent:
-  max_rounds: 10
+  max_rounds: 20
   num_threads: 1
   rollout_number: 1
 server:
@@ -43,17 +43,23 @@ tools:
     timeout_seconds: 30
     max_output_chars: 2000
   snowflake:
-    mode: mock
+    mode: live
     timeout_seconds: 60
     max_output_chars: 2000
-    mock:
-      response_csv: 'MOCK_RESULT
-
-        1'
 preflight:
   check_model: true
-  check_snowflake: false
+  check_snowflake: true
+auto_evaluate:
+  enabled: true
+  timeout: 300
+  max_workers: 4
 secrets:
   model_api:
     base_url: https://api.deepseek.com
     api_key: '***REDACTED***'
+  snowflake:
+    user: '***REDACTED***'
+    password: '***REDACTED***'
+    account: RSRSBDK-YDB67606
+    role: PARTICIPANT
+    warehouse: COMPUTE_WH_PARTICIPANT

@@ -1,5 +1,5 @@
 experiment:
-  name: smoke-test
+  name: smoke-test-pro
   results_root: methods/spider-agent-tc/results
   resume: true
 
@@ -21,10 +21,10 @@ tasks:
   order: seeded_shuffle
 
 model:
-  name: deepseek-v4-flash
+  name: deepseek-v4-pro
   temperature: 0
   top_p: 1
-  max_tokens: 4096
+  max_tokens: 100000
   request_timeout_seconds: 120
   retry:
     max_attempts: 3
@@ -33,7 +33,7 @@ model:
     max_delay_seconds: 10
 
 agent:
-  max_rounds: 10
+  max_rounds: 20
   num_threads: 1
   rollout_number: 1
 
@@ -54,5 +54,11 @@ tools:
     max_output_chars: 2000
 
 preflight:
-  check_model: false
-  check_snowflake: false
+  check_model: true
+  check_snowflake: true
+
+# 自动评分配置（可选）
+auto_evaluate:
+  enabled: true        # 是否在运行结束后自动评分
+  timeout: 300         # SQL 执行超时时间（秒）
+  max_workers: 4       # 并行评分的线程数

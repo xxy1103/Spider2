@@ -1,0 +1,19 @@
+{
+  "fingerprint": "b3cd38d4e9238049dcc62d47d3b0ff22831476a1889af925a2b4c2761d6f19c4",
+  "created_at": "2026-07-29T10:21:14.521863+00:00",
+  "last_started_at": "2026-07-29T10:21:14.521883+00:00",
+  "config_path": "/mnt/c/Users/ulna/Desktop/Spider2/methods/spider-agent-tc/configs/smoke.yaml",
+  "environment": {
+    "python": "3.11.15",
+    "openai": "2.48.0",
+    "requests": "2.34.2",
+    "fastapi": "0.140.0",
+    "uvicorn": "0.51.0",
+    "pandas": "3.0.5",
+    "snowflake-connector-python": "4.7.1",
+    "PyYAML": "6.0.3",
+    "langgraph": "1.2.10",
+    "langchain-core": "1.5.2",
+    "langchain-openai": "1.4.1"
+  }
+}

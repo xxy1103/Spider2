@@ -145,3 +145,6 @@ credentials/
 methods/spider-agent-tc/configs/secrets.yaml
 
 methods/spider-agent-tc/configs/mock.secrets.yaml
+
+# Snowflake credentials
+spider2-snow/evaluation_suite/snowflake_credential.json

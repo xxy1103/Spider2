@@ -59,6 +59,7 @@ _SCHEMA = {
     "tools.snowflake": {"mode", "timeout_seconds", "max_output_chars", "mock"},
     "tools.snowflake.mock": {"response_csv"},
     "preflight": {"check_model", "check_snowflake"},
+    "auto_evaluate": {"enabled", "timeout", "max_workers"},
 }
 
 _TOP_LEVEL = {
@@ -71,6 +72,7 @@ _TOP_LEVEL = {
     "server",
     "tools",
     "preflight",
+    "auto_evaluate",
 }
 
 
@@ -137,12 +139,19 @@ def _string_list(value: Any, location: str) -> list[str]:
 
 def _validate_main(raw: dict[str, Any]) -> None:
     _reject_unknown(raw, _TOP_LEVEL, "config")
-    _required(raw, _TOP_LEVEL, "config")
+    # auto_evaluate is optional
+    required_sections = _TOP_LEVEL - {"auto_evaluate"}
+    _required(raw, required_sections, "config")
 
     for section in ("experiment", "paths", "tasks", "model", "agent", "server", "tools", "preflight"):
         mapping = _mapping(raw, section, "config")
         _reject_unknown(mapping, _SCHEMA[section], section)
         _required(mapping, _SCHEMA[section], section)
+
+    # Validate auto_evaluate if present
+    if "auto_evaluate" in raw:
+        auto_eval = _mapping(raw, "auto_evaluate", "config")
+        _reject_unknown(auto_eval, _SCHEMA["auto_evaluate"], "auto_evaluate")
 
     retry = _mapping(raw["model"], "retry", "model")
     _reject_unknown(retry, _SCHEMA["model.retry"], "model.retry")

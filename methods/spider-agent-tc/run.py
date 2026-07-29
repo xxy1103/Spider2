@@ -87,6 +87,9 @@ def check_dependencies() -> None:
         "requests": "requests",
         "snowflake-connector-python": "snowflake.connector",
         "uvicorn": "uvicorn",
+        "langgraph": "langgraph",
+        "langchain-core": "langchain_core",
+        "langchain-openai": "langchain_openai",
     }
     missing = []
     for package, module in modules.items():
@@ -152,6 +155,9 @@ def _environment_versions() -> dict[str, str]:
         "pandas",
         "snowflake-connector-python",
         "PyYAML",
+        "langgraph",
+        "langchain-core",
+        "langchain-openai",
     ]
     versions = {"python": sys.version.split()[0]}
     for package in packages:
@@ -308,6 +314,17 @@ def execute(config: LoadedConfig) -> int:
 
         summary = run_agent(build_agent_args(config, port), config.selected_items)
         write_summary(config, summary)
+        
+        # Auto evaluation and report generation
+        auto_eval_config = config.raw.get("auto_evaluate", {})
+        if auto_eval_config.get("enabled", False):
+            try:
+                from agent.auto_evaluator import run_evaluation_and_report
+                run_evaluation_and_report(config, summary)
+            except Exception as e:
+                print(f"\n⚠️  Warning: Auto evaluation failed: {e}", file=sys.stderr)
+                print("Agent run results are still valid.\n", file=sys.stderr)
+        
         if summary["failed_instance_ids"]:
             print(f"Run completed with {len(summary['failed_instance_ids'])} failed task(s)")
             return 1
