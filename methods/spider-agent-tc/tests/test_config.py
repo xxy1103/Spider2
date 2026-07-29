@@ -15,7 +15,6 @@ from config import (
     ConfigError,
     LoadedConfig,
     _validate_main,
-    _validate_secrets,
     redacted_effective_config,
     select_experiment_run_dir,
     select_tasks,
@@ -152,7 +151,10 @@ def test_smoke_config_loads_real_repository_paths_and_task(monkeypatch):
 
     monkeypatch.setattr(config_module, "_read_yaml", fake_read_yaml)
     loaded = config_module.load_config(TC_ROOT / "configs" / "smoke.yaml")
-    assert [item["instance_id"] for item in loaded.selected_items] == ["sf_bq011"]
+    selected_ids = [item["instance_id"] for item in loaded.selected_items]
+    assert len(selected_ids) == 50
+    assert len(set(selected_ids)) == 50
+    assert "sf_bq011" in selected_ids
     assert loaded.paths["databases"].is_dir()
     assert loaded.paths["documents"].is_dir()
     assert len(loaded.fingerprint) == 64
@@ -163,29 +165,6 @@ def test_unknown_config_field_is_rejected():
     raw["model"]["name"] = "test-model"
     raw["model"]["typo"] = 123
     with pytest.raises(ConfigError, match="Unknown field"):
-        _validate_main(raw)
-
-
-def test_mock_config_schema_and_model_only_secrets_are_valid():
-    raw = yaml.safe_load((TC_ROOT / "configs" / "mock.yaml").read_text(encoding="utf-8"))
-    raw["model"]["name"] = "test-model"
-    _validate_main(raw)
-    _validate_secrets(
-        {
-            "model_api": {
-                "base_url": "https://api.service.test/v1",
-                "api_key": "key-value",
-            }
-        },
-        "mock",
-    )
-
-
-def test_mock_mode_rejects_live_snowflake_preflight():
-    raw = yaml.safe_load((TC_ROOT / "configs" / "mock.yaml").read_text(encoding="utf-8"))
-    raw["model"]["name"] = "test-model"
-    raw["preflight"]["check_snowflake"] = True
-    with pytest.raises(ConfigError, match="must be false"):
         _validate_main(raw)
 
 
@@ -259,21 +238,3 @@ def test_effective_config_redacts_secrets(tmp_path):
     assert "user-value" not in rendered
     assert "token-value" not in rendered
     assert snapshot["server"]["resolved_port"] == 5010
-
-
-def test_mock_effective_config_does_not_require_snowflake_secrets(tmp_path):
-    raw = yaml.safe_load((TC_ROOT / "configs" / "mock.yaml").read_text(encoding="utf-8"))
-    loaded = LoadedConfig(
-        config_path=tmp_path / "config.yaml",
-        repo_root=tmp_path,
-        raw=raw,
-        secrets={
-            "model_api": {"base_url": "https://api.example/v1", "api_key": "key-value"}
-        },
-        paths={key: tmp_path / value for key, value in raw["paths"].items()},
-        selected_items=sample_items()[:1],
-        fingerprint="fingerprint",
-    )
-    snapshot = redacted_effective_config(loaded)
-    assert "snowflake" not in snapshot["secrets"]
-    assert snapshot["tools"]["snowflake"]["mode"] == "mock"

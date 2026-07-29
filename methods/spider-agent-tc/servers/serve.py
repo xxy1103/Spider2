@@ -1,9 +1,11 @@
 import argparse
+import asyncio
+import logging
+from typing import Any
+
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from typing import Dict, Any, List
-import logging
 
 from config import load_config
 from safe_logging import RedactingFilter, configured_sensitive_values
@@ -15,39 +17,59 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Tools Server API")
 tool_registry = ToolRegistry()
 
+
+async def execute_single_tool(tool_call: dict[str, Any]) -> dict[str, Any]:
+    """Execute one tool call without cancelling sibling calls on failure."""
+    if not isinstance(tool_call, dict):
+        return {"error": "Invalid tool call: expected an object"}
+
+    tool_name = tool_call.get("name")
+    arguments = tool_call.get("arguments", {})
+    if not isinstance(tool_name, str) or not tool_name:
+        return {"error": "Invalid tool call: missing tool name"}
+    if not isinstance(arguments, dict):
+        return {"error": f"Invalid arguments for tool {tool_name}: expected an object"}
+
+    logger.info("Executing tool: %s", tool_name)
+    if not tool_registry.has_tool(tool_name):
+        return {"error": f"Tool {tool_name} not found"}
+
+    try:
+        return await tool_registry.execute_tool(tool_name, **arguments)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Tool execution failed for %s: %s", tool_name, type(exc).__name__)
+        return {"error": f"Tool execution failed: {type(exc).__name__}"}
+
+
+async def execute_tool_batch(
+    tool_calls: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Execute a batch concurrently while preserving input order."""
+    return await asyncio.gather(
+        *(execute_single_tool(tool_call) for tool_call in tool_calls)
+    )
+
+
 @app.post("/execute")
-async def execute_tool(request: Request) -> JSONResponse:
+async def execute_tools(request: Request) -> JSONResponse:
     try:
         data = await request.json()
         tool_calls = data.get("tool_calls", [])
         
-        if not tool_calls:
+        if not isinstance(tool_calls, list) or not tool_calls:
             return JSONResponse(
                 status_code=400,
-                content={"error": "No tool_calls provided"}
+                content={"error": "tool_calls must be a non-empty list"}
             )
         
-        tool_call = tool_calls[0]
-        tool_name = tool_call.get("name")
-        arguments = tool_call.get("arguments", {})
-        
-        logger.info(f"Executing tool: {tool_name}")
-        
-        if not tool_registry.has_tool(tool_name):
-            return JSONResponse(
-                status_code=404,
-                content={"error": f"Tool {tool_name} not found"}
-            )
-        
-        result = await tool_registry.execute_tool(tool_name, **arguments)
-        
-        return JSONResponse(content=result)
+        results = await execute_tool_batch(tool_calls)
+        return JSONResponse(content=results)
     
-    except Exception as e:
-        logger.error(f"Error processing request: {type(e).__name__}")
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Error processing request: %s", type(exc).__name__)
         return JSONResponse(
             status_code=500,
-            content={"error": f"Internal server error: {type(e).__name__}"}
+            content={"error": f"Internal server error: {type(exc).__name__}"}
         )
 
 @app.get("/health")

@@ -30,13 +30,16 @@ class MessageProcessor:
             response.raise_for_status()
             
             api_response = response.json()
-            
-            if isinstance(api_response, list):
-                return api_response
-            elif isinstance(api_response, dict):
-                return [api_response]
-            else:
-                return [{"error": f"Unexpected API response format: {api_response}"}]
+            if not isinstance(api_response, list):
+                raise ValueError("Tool server response must be a list")
+            if len(api_response) != len(tool_calls):
+                raise ValueError(
+                    f"Expected {len(tool_calls)} tool results, "
+                    f"received {len(api_response)}"
+                )
+            if not all(isinstance(result, dict) for result in api_response):
+                raise ValueError("Every tool result must be an object")
+            return api_response
                 
         except Exception as e:
             error_result = {"error": f"Tool API error: {type(e).__name__}"}
