@@ -625,13 +625,8 @@ class StructuredToolRuntime:
     def _validate_sql(
         self, sql: str, context: dict[str, Any]
     ) -> dict[str, Any]:
-        settings = self._settings("sql")
         if not isinstance(sql, str) or not sql.strip():
             raise ValueError("SQL must be a non-empty string")
-        if len(sql) > settings["max_sql_chars"]:
-            raise ValueError(
-                f"SQL exceeds max_sql_chars ({settings['max_sql_chars']})"
-            )
         if PLACEHOLDER_RE.search(sql):
             raise ValueError("SQL contains a forbidden placeholder")
         try:

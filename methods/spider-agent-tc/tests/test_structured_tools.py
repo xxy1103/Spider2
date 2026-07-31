@@ -93,7 +93,6 @@ def make_config(tmp_path, mode="live"):
                     "timeout_seconds": 30,
                     "preview_rows": 20,
                     "max_page_size": 100,
-                    "max_sql_chars": 300000,
                     **(
                         {"mock": {"response_csv": "VALUE\n" + "\n".join(map(str, range(30)))}}
                         if mode == "mock"

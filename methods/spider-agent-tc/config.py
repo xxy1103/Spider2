@@ -72,7 +72,6 @@ _SCHEMA = {
         "timeout_seconds",
         "preview_rows",
         "max_page_size",
-        "max_sql_chars",
         "mock",
     },
     "tools.submission": {"require_executed", "reject_empty"},
@@ -196,7 +195,6 @@ def _validate_main(raw: dict[str, Any]) -> None:
             "timeout_seconds",
             "preview_rows",
             "max_page_size",
-            "max_sql_chars",
         },
         "tools.sql",
     )
@@ -275,7 +273,7 @@ def _validate_main(raw: dict[str, Any]) -> None:
     if catalog["page_size"] > catalog["max_page_size"]:
         raise ConfigError("tools.catalog.page_size must not exceed max_page_size")
     _positive_number(sql["timeout_seconds"], "tools.sql.timeout_seconds")
-    for key in ("preview_rows", "max_page_size", "max_sql_chars"):
+    for key in ("preview_rows", "max_page_size"):
         _positive_int(sql[key], f"tools.sql.{key}")
     if sql["preview_rows"] > sql["max_page_size"]:
         raise ConfigError("tools.sql.preview_rows must not exceed max_page_size")
