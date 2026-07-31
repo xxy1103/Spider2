@@ -8,6 +8,7 @@ import pytest
 TC_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TC_ROOT))
 
+from agent.langgraph_agent import LangGraphAgent
 from agent.llm_agent import LLMAgent
 from config import ConfigError, LoadedConfig
 from run import find_available_port, prepare_experiment, start_server, stop_server
@@ -137,3 +138,67 @@ def test_model_retry_stops_after_configured_attempts(monkeypatch, tmp_path, caps
     assert result == "ERROR: Failed to get response after 3 attempts"
     assert create.call_count == 3
     assert "secret" not in capsys.readouterr().out
+
+
+def test_model_round_logs_provider_reasoning_and_assistant_content(caplog):
+    agent = object.__new__(LangGraphAgent)
+    agent.args = SimpleNamespace(model_api_key="secret")
+    response_message = SimpleNamespace(
+        content="I will inspect the relevant table.",
+        reasoning_content="The task requires one row per month.",
+        tool_calls=[],
+        model_extra=None,
+    )
+    agent._call_llm_with_retry = Mock(
+        return_value=SimpleNamespace(
+            choices=[SimpleNamespace(message=response_message)]
+        )
+    )
+    state = {
+        "messages": [],
+        "item": {"instance_id": "task"},
+        "conversation_history": [],
+        "round_num": 0,
+        "rollout_idx": 1,
+        "performance": LangGraphAgent._new_performance(),
+    }
+
+    with caplog.at_level("INFO", logger="agent.langgraph_agent"):
+        result = agent._call_model_node(state)
+
+    assert "MODEL_ROUND instance=task rollout=2 round=1" in caplog.text
+    assert "THINKING:\nThe task requires one row per month." in caplog.text
+    assert "ASSISTANT_CONTENT:\nI will inspect the relevant table." in caplog.text
+    assert result["conversation_history"][-1]["reasoning_content"] == (
+        "The task requires one row per month."
+    )
+
+
+def test_model_round_uses_working_note_when_provider_has_no_reasoning(caplog):
+    agent = object.__new__(LangGraphAgent)
+    agent.args = SimpleNamespace(model_api_key="secret")
+    response_message = SimpleNamespace(
+        content="I will validate the date boundary.",
+        tool_calls=[],
+        model_extra={},
+    )
+    agent._call_llm_with_retry = Mock(
+        return_value=SimpleNamespace(
+            choices=[SimpleNamespace(message=response_message)]
+        )
+    )
+    state = {
+        "messages": [],
+        "item": {"instance_id": "task"},
+        "conversation_history": [],
+        "round_num": 2,
+        "rollout_idx": 0,
+        "performance": LangGraphAgent._new_performance(),
+    }
+
+    with caplog.at_level("INFO", logger="agent.langgraph_agent"):
+        result = agent._call_model_node(state)
+
+    assert "MODEL_ROUND instance=task rollout=1 round=3" in caplog.text
+    assert "THINKING_OR_WORKING_NOTE:\nI will validate the date boundary." in caplog.text
+    assert result["conversation_history"][-1]["reasoning_content"] == ""

@@ -207,6 +207,7 @@ class LangGraphAgent:
 
         assistant_message = response.choices[0].message
         content = assistant_message.content or ""
+        reasoning_content = self._extract_reasoning_content(assistant_message)
         raw_tool_calls = assistant_message.tool_calls or []
 
         tool_calls = [
@@ -217,6 +218,14 @@ class LangGraphAgent:
             }
             for tc in raw_tool_calls
         ]
+        self._log_model_round(
+            instance_id=instance_id,
+            rollout_idx=state["rollout_idx"],
+            round_num=round_num,
+            reasoning_content=reasoning_content,
+            content=content,
+            tool_names=[tc["name"] for tc in tool_calls],
+        )
 
         ai_message = AIMessage(content=content, tool_calls=tool_calls)
 
@@ -224,6 +233,7 @@ class LangGraphAgent:
             {
                 "role": "assistant",
                 "content": content,
+                "reasoning_content": reasoning_content,
                 "tool_calls": [
                     {"name": tc["name"], "arguments": tc["args"]} for tc in tool_calls
                 ],
@@ -236,6 +246,63 @@ class LangGraphAgent:
             "round_num": round_num,
             "performance": performance,
         }
+
+    @staticmethod
+    def _extract_reasoning_content(message: Any) -> str:
+        """Read provider-specific reasoning fields from a chat message."""
+        candidates = [getattr(message, "reasoning_content", None)]
+        model_extra = getattr(message, "model_extra", None)
+        if isinstance(model_extra, dict):
+            candidates.extend(
+                model_extra.get(field)
+                for field in ("reasoning_content", "reasoning", "thinking")
+            )
+
+        for candidate in candidates:
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+            if isinstance(candidate, (dict, list)) and candidate:
+                return json.dumps(candidate, ensure_ascii=False, default=str)
+        return ""
+
+    @staticmethod
+    def _log_model_round(
+        *,
+        instance_id: str,
+        rollout_idx: int,
+        round_num: int,
+        reasoning_content: str,
+        content: Any,
+        tool_names: list[str],
+    ) -> None:
+        """Write one complete model round as a single, concurrency-safe log record."""
+        content_text = str(content).strip() if content else ""
+        tools_text = ", ".join(tool_names) if tool_names else "(none)"
+        if reasoning_content:
+            logger.info(
+                "MODEL_ROUND instance=%s rollout=%s round=%s\n"
+                "THINKING:\n%s\n"
+                "ASSISTANT_CONTENT:\n%s\n"
+                "TOOLS: %s",
+                instance_id,
+                rollout_idx + 1,
+                round_num,
+                reasoning_content,
+                content_text or "(empty)",
+                tools_text,
+            )
+            return
+
+        logger.info(
+            "MODEL_ROUND instance=%s rollout=%s round=%s\n"
+            "THINKING_OR_WORKING_NOTE:\n%s\n"
+            "TOOLS: %s",
+            instance_id,
+            rollout_idx + 1,
+            round_num,
+            content_text or "(empty; provider returned no reasoning_content)",
+            tools_text,
+        )
 
     @staticmethod
     def _parse_tool_arguments(arguments: Any) -> dict[str, Any]:
