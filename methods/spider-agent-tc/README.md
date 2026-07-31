@@ -87,7 +87,8 @@ JSON files plus:
 - `effective-config.yaml`: resolved configuration with secrets redacted;
 - `selected-tasks.json`: exact task order;
 - `run-manifest.json`: configuration fingerprint and environment versions;
-- `run-summary.json`: completion summary;
+- `run-summary.json`: completion summary plus aggregate and per-task performance
+  profiles;
 - `failed-tasks.json`: IDs that did not complete every requested rollout.
 - `run.log`: detailed Agent, tool-server, and evaluation diagnostics. The
   terminal stays focused on aggregate progress and writes credential-redacted
@@ -104,6 +105,16 @@ the rollout finishes, so the file can be watched safely during execution.
 
 The process exits with status 1 when any selected task remains incomplete, status
 2 for configuration or startup failures, and status 130 when interrupted.
+
+Completed per-task records contain a `performance` object with wall-clock task
+duration, cumulative model and tool duration, model retry/error counts, SQL
+call/error counts, maximum executed or submitted SQL length, and rejected
+`terminate` calls. `run-summary.json` aggregates these fields and records Agent
+wall-clock time, average/P95 task duration, the slowest task, and tool-level
+duration totals. When automatic evaluation is enabled, `REPORT.md` includes the
+same overview and a table of the ten slowest tasks. Tool durations are measured
+inside the tool server; cumulative durations can therefore exceed Agent
+wall-clock time when calls or tasks run concurrently.
 
 ## Run without a Snowflake account
 
@@ -231,16 +242,17 @@ with an explicit migration error.
 
 The model can use only these task-scoped tools:
 
-1. `get_task_context` to read the question, external knowledge, allowed database,
-   and indexed schema summary.
-2. `search_schema` and `describe_table` to find and inspect relevant tables.
-3. `resolve_table_set` and `build_union_sql` to construct complete deterministic
+The initial user message contains the question, external knowledge, allowed
+database, and the complete indexed table-name list grouped by schema.
+
+1. `search_schema` and `describe_table` to find and inspect relevant tables.
+2. `resolve_table_set` and `build_union_sql` to construct complete deterministic
    SQL for date-sharded tables without abbreviations.
-4. `execute_sql` to validate scope and run one read-only Snowflake query, returning
+3. `execute_sql` to validate scope and run one read-only Snowflake query, returning
    at most 20 preview rows by default.
-5. `read_query_result` for explicit bounded pagination and `get_sql_text` to
+4. `read_query_result` for explicit bounded pagination and `get_sql_text` to
    recover an untruncated SQL artifact.
-6. `terminate(answer="<complete SQL>")` to submit the exact SQL text.
+5. `terminate(answer="<complete SQL>")` to submit the exact SQL text.
 
 Every call is bound to an instance, rollout, and allowed `db_id`. Cross-database
 references are rejected before Snowflake is contacted. A live submission is

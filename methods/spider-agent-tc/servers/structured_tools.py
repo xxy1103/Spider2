@@ -340,40 +340,6 @@ class StructuredToolRuntime:
         temporary.write_bytes(content.encode("utf-8"))
         temporary.replace(path)
 
-    def get_task_context(self, *, _context: Any) -> dict[str, Any]:
-        context = self._context(_context)
-        allowed = str(context["allowed_database"])
-        with self._connect_catalog() as connection:
-            rows = connection.execute(
-                """
-                SELECT schema_name, COUNT(*) AS table_count,
-                       MIN(table_name) AS first_table,
-                       MAX(table_name) AS last_table
-                FROM tables WHERE database_id = ?
-                GROUP BY schema_name ORDER BY schema_name
-                """,
-                (allowed,),
-            ).fetchall()
-        knowledge = None
-        knowledge_name = context.get("external_knowledge")
-        if knowledge_name and self.config is not None:
-            candidate = (self.config.paths["documents"] / str(knowledge_name)).resolve()
-            try:
-                candidate.relative_to(self.config.paths["documents"].resolve())
-            except ValueError as exc:
-                raise ValueError("External knowledge path is outside documents") from exc
-            if candidate.is_file():
-                knowledge = candidate.read_text(encoding="utf-8")
-        return _json_content(
-            {
-                "instance_id": context["instance_id"],
-                "question": context["instruction"],
-                "external_knowledge": knowledge,
-                "allowed_database": allowed,
-                "schemas": [dict(row) for row in rows],
-            }
-        )
-
     def search_schema(
         self,
         *,
@@ -819,6 +785,7 @@ class StructuredToolRuntime:
                 "execution_id": execution_id,
                 "sql_id": actual_sql_id,
                 "sql_sha256": validated["sql_sha256"],
+                "sql_chars": len(actual_sql),
                 "status": "success",
                 "has_rows": bool(rows),
                 "columns": columns,
@@ -834,6 +801,7 @@ class StructuredToolRuntime:
                 "execution_id": execution_id,
                 "sql_id": actual_sql_id,
                 "sql_sha256": validated["sql_sha256"],
+                "sql_chars": len(actual_sql),
                 "status": "error",
                 "has_rows": False,
                 "error_type": type(exc).__name__,
@@ -962,12 +930,6 @@ RUNTIME = StructuredToolRuntime()
 
 
 TOOL_DEFINITIONS = [
-    ToolDefinition(
-        "get_task_context",
-        "Get the current question, external knowledge, allowed database, schemas, and table layout summary.",
-        _object_schema({}),
-        RUNTIME.get_task_context,
-    ),
     ToolDefinition(
         "search_schema",
         "Search tables, columns, types, and descriptions only within the current task database.",

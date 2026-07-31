@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import logging
+import time
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -36,17 +37,33 @@ async def execute_single_tool(tool_call: dict[str, Any]) -> dict[str, Any]:
     if not tool_registry.has_tool(tool_name):
         return {"error": f"Tool {tool_name} not found"}
 
+    started_at = time.perf_counter()
     try:
-        return await tool_registry.execute_tool(tool_name, **arguments)
+        result = await tool_registry.execute_tool(tool_name, **arguments)
+        if isinstance(result, dict) and isinstance(arguments.get("_context"), dict):
+            result["_profile"] = {
+                "duration_seconds": round(time.perf_counter() - started_at, 6),
+            }
+        return result
     except ValueError as exc:
         logger.info("Tool input rejected for %s: %s", tool_name, exc)
-        return {
+        result = {
             "error": str(exc),
             "error_type": type(exc).__name__,
         }
+        if isinstance(arguments.get("_context"), dict):
+            result["_profile"] = {
+                "duration_seconds": round(time.perf_counter() - started_at, 6),
+            }
+        return result
     except Exception as exc:  # noqa: BLE001
         logger.error("Tool execution failed for %s: %s", tool_name, type(exc).__name__)
-        return {"error": f"Tool execution failed: {type(exc).__name__}"}
+        result = {"error": f"Tool execution failed: {type(exc).__name__}"}
+        if isinstance(arguments.get("_context"), dict):
+            result["_profile"] = {
+                "duration_seconds": round(time.perf_counter() - started_at, 6),
+            }
+        return result
 
 
 async def execute_tool_batch(

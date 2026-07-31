@@ -16,6 +16,7 @@ import os
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from typing import Annotated, Any, Sequence, TypedDict
 
 from langchain_core.messages import (
@@ -47,6 +48,7 @@ class AgentState(TypedDict):
     rollout_idx: int
     terminated: bool
     error: str | None
+    performance: dict[str, Any]
 
 
 class LangGraphAgent:
@@ -71,7 +73,13 @@ class LangGraphAgent:
     # ------------------------------------------------------------------
     # LLM invocation with retry (behavior preserved from legacy LLMAgent)
     # ------------------------------------------------------------------
-    def _call_llm_with_retry(self, openai_messages, instance_id=None, round_num=None):
+    def _call_llm_with_retry(
+        self,
+        openai_messages,
+        instance_id=None,
+        round_num=None,
+        attempt_callback=None,
+    ):
         """Call LLM with retry mechanism. Returns the raw response or raises."""
         retry = self.args.retry
         max_attempts = retry["max_attempts"]
@@ -80,6 +88,8 @@ class LangGraphAgent:
         last_error: Exception | None = None
 
         while attempt < max_attempts:
+            if attempt_callback is not None:
+                attempt_callback()
             try:
                 response = self.model_client.chat.completions.create(
                     model=self.args.model,
@@ -162,16 +172,38 @@ class LangGraphAgent:
         instance_id = state["item"]["instance_id"]
         round_num = state["round_num"] + 1
         openai_messages = self._to_openai_messages(state["messages"])
+        performance = self._copy_performance(
+            state.get("performance") or self._new_performance()
+        )
+        attempt_count = 0
 
+        def count_attempt() -> None:
+            nonlocal attempt_count
+            attempt_count += 1
+
+        started_at = time.perf_counter()
         try:
             response = self._call_llm_with_retry(
-                openai_messages, instance_id=instance_id, round_num=round_num
+                openai_messages,
+                instance_id=instance_id,
+                round_num=round_num,
+                attempt_callback=count_attempt,
             )
         except Exception as e:  # noqa: BLE001
+            performance["model_calls"] += 1
+            performance["model_attempts"] += attempt_count
+            performance["model_errors"] += 1
+            performance["model_duration_seconds"] += (
+                time.perf_counter() - started_at
+            )
             safe_message = str(e).replace(self.args.model_api_key, "***REDACTED***")
             return {
                 "error": f"ERROR: Failed to get response after retries: {safe_message}",
+                "performance": performance,
             }
+        performance["model_calls"] += 1
+        performance["model_attempts"] += attempt_count
+        performance["model_duration_seconds"] += time.perf_counter() - started_at
 
         assistant_message = response.choices[0].message
         content = assistant_message.content or ""
@@ -202,6 +234,7 @@ class LangGraphAgent:
             "messages": [ai_message],
             "conversation_history": conversation_history,
             "round_num": round_num,
+            "performance": performance,
         }
 
     @staticmethod
@@ -238,11 +271,24 @@ class LangGraphAgent:
                 {"role": "tool", "content": reason}
                 for _ in last_message.tool_calls
             ]
+            performance = self._copy_performance(
+                state.get("performance") or self._new_performance()
+            )
+            for tc in last_message.tool_calls:
+                self._record_tool_profile(
+                    performance,
+                    tc["name"],
+                    tc.get("args", {}),
+                    duration_seconds=0.0,
+                    failed=True,
+                    terminate_rejected=tc["name"] == "terminate",
+                )
             return {
                 "messages": tool_messages,
                 "conversation_history": (
                     state["conversation_history"] + history_entries
                 ),
+                "performance": performance,
             }
 
         tool_calls_for_execution: list[dict[str, Any]] = []
@@ -266,8 +312,24 @@ class LangGraphAgent:
         tool_messages: list[ToolMessage] = []
         history_entries: list[dict[str, Any]] = []
         accepted_termination = False
+        performance = self._copy_performance(
+            state.get("performance") or self._new_performance()
+        )
         for tc, exec_result in zip(last_message.tool_calls, exec_results):
+            profile = exec_result.pop("_profile", {})
             result_content = exec_result.get("content", str(exec_result))
+            failed = "error" in exec_result
+            content_payload: dict[str, Any] = {}
+            if isinstance(result_content, str):
+                try:
+                    parsed_content = json.loads(result_content)
+                    if isinstance(parsed_content, dict):
+                        content_payload = parsed_content
+                except json.JSONDecodeError:
+                    pass
+            if content_payload.get("status") == "error":
+                failed = True
+            terminate_rejected = False
             if tc["name"] == "terminate":
                 try:
                     accepted_termination = bool(
@@ -275,6 +337,17 @@ class LangGraphAgent:
                     )
                 except (json.JSONDecodeError, AttributeError):
                     accepted_termination = False
+                terminate_rejected = not accepted_termination
+            self._record_tool_profile(
+                performance,
+                tc["name"],
+                tc.get("args", {}),
+                duration_seconds=float(profile.get("duration_seconds", 0.0)),
+                failed=failed,
+                terminate_rejected=terminate_rejected,
+                observed_sql_chars=content_payload.get("sql_chars"),
+            )
+            if tc["name"] == "terminate":
                 if accepted_termination:
                     continue
             tool_messages.append(
@@ -285,10 +358,90 @@ class LangGraphAgent:
         result: dict[str, Any] = {
             "messages": tool_messages,
             "conversation_history": state["conversation_history"] + history_entries,
+            "performance": performance,
         }
         if accepted_termination:
             result["terminated"] = True
         return result
+
+    @staticmethod
+    def _new_performance() -> dict[str, Any]:
+        return {
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "duration_seconds": 0.0,
+            "model_calls": 0,
+            "model_attempts": 0,
+            "model_errors": 0,
+            "model_duration_seconds": 0.0,
+            "tool_calls": 0,
+            "tool_errors": 0,
+            "tool_duration_seconds": 0.0,
+            "sql_calls": 0,
+            "sql_errors": 0,
+            "sql_duration_seconds": 0.0,
+            "max_sql_chars": 0,
+            "terminate_calls": 0,
+            "terminate_rejections": 0,
+            "tools": {},
+        }
+
+    @staticmethod
+    def _copy_performance(performance: dict[str, Any]) -> dict[str, Any]:
+        copied = dict(performance)
+        copied["tools"] = {
+            name: dict(values)
+            for name, values in performance.get("tools", {}).items()
+        }
+        return copied
+
+    @staticmethod
+    def _record_tool_profile(
+        performance: dict[str, Any],
+        tool_name: str,
+        arguments: dict[str, Any],
+        *,
+        duration_seconds: float,
+        failed: bool,
+        terminate_rejected: bool,
+        observed_sql_chars: Any = None,
+    ) -> None:
+        performance["tool_calls"] += 1
+        performance["tool_duration_seconds"] += duration_seconds
+        if failed:
+            performance["tool_errors"] += 1
+
+        tool_stats = performance["tools"].setdefault(
+            tool_name,
+            {"calls": 0, "errors": 0, "duration_seconds": 0.0},
+        )
+        tool_stats["calls"] += 1
+        tool_stats["duration_seconds"] += duration_seconds
+        if failed:
+            tool_stats["errors"] += 1
+
+        if tool_name == "execute_sql":
+            performance["sql_calls"] += 1
+            performance["sql_duration_seconds"] += duration_seconds
+            if failed:
+                performance["sql_errors"] += 1
+            sql = arguments.get("sql")
+            if isinstance(sql, str):
+                performance["max_sql_chars"] = max(
+                    performance["max_sql_chars"], len(sql)
+                )
+            if isinstance(observed_sql_chars, int):
+                performance["max_sql_chars"] = max(
+                    performance["max_sql_chars"], observed_sql_chars
+                )
+        elif tool_name == "terminate":
+            performance["terminate_calls"] += 1
+            if terminate_rejected:
+                performance["terminate_rejections"] += 1
+            answer = arguments.get("answer")
+            if isinstance(answer, str):
+                performance["max_sql_chars"] = max(
+                    performance["max_sql_chars"], len(answer)
+                )
 
     # ------------------------------------------------------------------
     # Routing
@@ -353,6 +506,9 @@ class LangGraphAgent:
             "terminated": state.get("terminated", False),
             "in_progress": in_progress,
             "round_num": state.get("round_num", 0),
+            "performance": self._copy_performance(
+                state.get("performance") or self._new_performance()
+            ),
         }
         if state.get("error"):
             result["error"] = state["error"]
@@ -362,6 +518,7 @@ class LangGraphAgent:
     def process_single_item(self, item, rollout_idx):
         instance_id = item["instance_id"]
         last_state: AgentState | None = None
+        task_started_at = time.perf_counter()
 
         if self.processed_instances[instance_id] >= self.args.rollout_number:
             logger.info(
@@ -389,6 +546,7 @@ class LangGraphAgent:
                 "rollout_idx": rollout_idx,
                 "terminated": False,
                 "error": None,
+                "performance": self._new_performance(),
             }
 
             final_state = initial_state
@@ -412,6 +570,12 @@ class LangGraphAgent:
                 rollout_idx,
                 in_progress=False,
             )
+            result["performance"]["duration_seconds"] = round(
+                time.perf_counter() - task_started_at, 6
+            )
+            result["performance"]["finished_at"] = datetime.now(
+                timezone.utc
+            ).isoformat()
             self.file_manager.upsert_rollout_result(result)
 
             return result
@@ -427,13 +591,25 @@ class LangGraphAgent:
                 error_result["error"] = safe_message
                 error_result["terminated"] = False
                 error_result["round_failed"] = last_state.get("round_num", 0)
+                error_result["performance"]["duration_seconds"] = round(
+                    time.perf_counter() - task_started_at, 6
+                )
+                error_result["performance"]["finished_at"] = datetime.now(
+                    timezone.utc
+                ).isoformat()
             else:
+                performance = self._new_performance()
+                performance["duration_seconds"] = round(
+                    time.perf_counter() - task_started_at, 6
+                )
+                performance["finished_at"] = datetime.now(timezone.utc).isoformat()
                 error_result = {
                     "instance_id": instance_id,
                     "rollout_idx": rollout_idx,
                     "error": safe_message,
                     "terminated": False,
                     "in_progress": False,
+                    "performance": performance,
                 }
             self.file_manager.upsert_rollout_result(error_result)
             logger.error(
@@ -496,10 +672,20 @@ class LangGraphAgent:
         """Summarize completion from persisted per-instance result files."""
         successful = []
         failed = []
+        profiles: dict[str, dict[str, Any]] = {}
         required_rollouts = self.args.rollout_number
         for item in items:
             instance_id = item["instance_id"]
             results = self.file_manager.load_instance_results(instance_id)
+            completed_results = [
+                result
+                for result in results
+                if isinstance(result, dict) and not result.get("in_progress", False)
+            ]
+            if completed_results:
+                profile = completed_results[0].get("performance")
+                if isinstance(profile, dict):
+                    profiles[instance_id] = profile
             terminated = sum(
                 1
                 for result in results
@@ -516,4 +702,85 @@ class LangGraphAgent:
             "successful_instance_ids": successful,
             "failed_instance_ids": failed,
             "rollout_number": required_rollouts,
+            "performance": self._aggregate_performance(profiles),
         }
+
+    @staticmethod
+    def _aggregate_performance(
+        profiles: dict[str, dict[str, Any]],
+    ) -> dict[str, Any]:
+        if not profiles:
+            return {"profiled_tasks": 0, "tasks": {}}
+
+        durations = sorted(
+            float(profile.get("duration_seconds", 0.0))
+            for profile in profiles.values()
+        )
+        p95_index = max(0, (len(durations) * 95 + 99) // 100 - 1)
+        slowest_instance_id = max(
+            profiles,
+            key=lambda instance_id: float(
+                profiles[instance_id].get("duration_seconds", 0.0)
+            ),
+        )
+        tools: dict[str, dict[str, Any]] = {}
+        for profile in profiles.values():
+            for tool_name, values in profile.get("tools", {}).items():
+                aggregate = tools.setdefault(
+                    tool_name,
+                    {"calls": 0, "errors": 0, "duration_seconds": 0.0},
+                )
+                aggregate["calls"] += int(values.get("calls", 0))
+                aggregate["errors"] += int(values.get("errors", 0))
+                aggregate["duration_seconds"] += float(
+                    values.get("duration_seconds", 0.0)
+                )
+
+        summed_fields = [
+            "model_calls",
+            "model_attempts",
+            "model_errors",
+            "model_duration_seconds",
+            "tool_calls",
+            "tool_errors",
+            "tool_duration_seconds",
+            "sql_calls",
+            "sql_errors",
+            "sql_duration_seconds",
+            "terminate_calls",
+            "terminate_rejections",
+        ]
+        summary: dict[str, Any] = {
+            "profiled_tasks": len(profiles),
+            "average_task_duration_seconds": round(
+                sum(durations) / len(durations), 6
+            ),
+            "p95_task_duration_seconds": round(durations[p95_index], 6),
+            "slowest_task": {
+                "instance_id": slowest_instance_id,
+                "duration_seconds": round(
+                    float(
+                        profiles[slowest_instance_id].get(
+                            "duration_seconds", 0.0
+                        )
+                    ),
+                    6,
+                ),
+            },
+            "max_sql_chars": max(
+                int(profile.get("max_sql_chars", 0))
+                for profile in profiles.values()
+            ),
+            "tools": tools,
+            "tasks": profiles,
+        }
+        for field in summed_fields:
+            summary[field] = round(
+                sum(float(profile.get(field, 0)) for profile in profiles.values()),
+                6,
+            )
+            if not field.endswith("_seconds"):
+                summary[field] = int(summary[field])
+        for values in summary["tools"].values():
+            values["duration_seconds"] = round(values["duration_seconds"], 6)
+        return summary

@@ -346,7 +346,11 @@ def execute(config: LoadedConfig) -> int:
         print("工具服务就绪")
         from agent.main import run_agent
 
+        agent_started_at = time.perf_counter()
         summary = run_agent(build_agent_args(config, port), config.selected_items)
+        summary.setdefault("performance", {})["agent_wall_clock_seconds"] = round(
+            time.perf_counter() - agent_started_at, 6
+        )
         write_summary(config, summary)
         
         # Auto evaluation and report generation

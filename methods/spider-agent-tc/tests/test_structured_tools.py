@@ -16,6 +16,7 @@ from servers.structured_tools import (
     build_catalog,
     get_openai_tools,
 )
+from agent.prompt_builders import SpiderAgentPromptBuilder
 from agent.auto_evaluator import extract_sql_answers as auto_extract_sql_answers
 from convert_to_submission_format import extract_sql_answers
 
@@ -140,10 +141,6 @@ def test_catalog_indexes_only_selected_databases_and_enforces_scope(tmp_path):
     runtime = StructuredToolRuntime()
     runtime.configure(config)
 
-    task = content(runtime.get_task_context(_context=context()))
-    assert task["allowed_database"] == "DB1"
-    assert task["schemas"][0]["table_count"] == 1
-
     matches = content(
         runtime.search_schema(query="amount", _context=context())
     )["matches"]
@@ -156,6 +153,36 @@ def test_catalog_indexes_only_selected_databases_and_enforces_scope(tmp_path):
 
     with pytest.raises(ValueError, match="outside"):
         runtime.describe_table(table="DB2.S.T2", _context=context())
+
+
+def test_initial_user_message_contains_indexed_schema_overview(tmp_path):
+    config = make_config(tmp_path)
+    write_table(config.paths["databases"], "DB1", "S", "T1")
+    write_table(config.paths["databases"], "DB1", "S", "T2")
+    write_table(config.paths["databases"], "DB1", "OTHER", "T3")
+    build_catalog(config)
+    system_prompt = tmp_path / "system.txt"
+    system_prompt.write_text("system", encoding="utf-8")
+    args = SimpleNamespace(
+        output_folder=str(config.experiment_dir),
+        system_prompt_path=str(system_prompt),
+        documents_path=str(config.paths["documents"]),
+    )
+
+    messages = SpiderAgentPromptBuilder().build_initial_prompt(
+        config.selected_items[0],
+        args,
+    )
+
+    user_content = messages[1]["content"]
+    assert "Question: question" in user_content
+    assert "The allowed database for this task is DB1." in user_content
+    assert "Indexed schema overview:" in user_content
+    assert "- OTHER (1 tables):\n  - T3" in user_content
+    assert "- S (2 tables):\n  - T1\n  - T2" in user_content
+    assert "first:" not in user_content
+    assert "last:" not in user_content
+    assert "get_task_context" not in user_content
 
 
 def test_large_samples_are_loaded_on_demand_and_bounded(tmp_path):
@@ -462,7 +489,6 @@ def test_sql_validation_rejects_unsafe_or_incomplete_queries(tmp_path, sql, matc
 def test_tool_schema_is_single_complete_public_surface():
     names = {item["function"]["name"] for item in get_openai_tools()}
     assert names == {
-        "get_task_context",
         "search_schema",
         "describe_table",
         "resolve_table_set",

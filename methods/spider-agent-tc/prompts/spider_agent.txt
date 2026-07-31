@@ -6,8 +6,8 @@ read-only SQL, and submit the complete final query.
 </ROLE>
 
 <PROBLEM_SOLVING_WORKFLOW>
-1. Call `get_task_context` first to confirm the question, external knowledge,
-   allowed database, schemas, and table layout.
+1. Review the question, external knowledge, allowed database, and indexed schema
+   overview provided in the user message.
 2. Use `search_schema` and `describe_table` to inspect only relevant metadata.
    Do not guess fields or query INFORMATION_SCHEMA.
 3. For date-suffixed tables, use `resolve_table_set` and `build_union_sql`.

@@ -256,6 +256,7 @@ def collect_conversation_stats(exp_dir: Path) -> dict[str, dict[str, Any]]:
                 "total_tool_calls": len(tool_calls),
                 "tool_call_distribution": dict(tool_call_counts),
                 "terminated": record.get("terminated", False),
+                "performance": record.get("performance", {}),
             }
             
         except Exception as e:
@@ -293,6 +294,7 @@ def generate_report(
         all_tool_calls.update(stat.get("tool_call_distribution", {}))
     
     total_tool_calls = sum(all_tool_calls.values())
+    performance = summary.get("performance", {})
     
     # Calculate average stats
     if stats:
@@ -378,6 +380,59 @@ def generate_report(
     else:
         lines.append("无工具调用记录。\n")
     
+    lines.extend([
+        "---",
+        "",
+        "## ⏱️ 性能剖面",
+        "",
+    ])
+
+    if performance.get("profiled_tasks", 0):
+        agent_wall_clock = float(performance.get("agent_wall_clock_seconds", 0))
+        model_duration = float(performance.get("model_duration_seconds", 0))
+        sql_duration = float(performance.get("sql_duration_seconds", 0))
+        lines.extend([
+            "| 指标 | 数值 |",
+            "|------|------|",
+            f"| Agent 墙钟时间 | {agent_wall_clock:.2f} 秒 |",
+            f"| 已剖析任务 | {performance['profiled_tasks']} |",
+            f"| 平均任务耗时 | {performance['average_task_duration_seconds']:.2f} 秒 |",
+            f"| P95 任务耗时 | {performance['p95_task_duration_seconds']:.2f} 秒 |",
+            f"| 最慢任务 | {performance['slowest_task']['instance_id']} ({performance['slowest_task']['duration_seconds']:.2f} 秒) |",
+            f"| 模型累计耗时 | {model_duration:.2f} 秒 |",
+            f"| 模型调用 / 重试 | {performance.get('model_calls', 0)} / {performance.get('model_attempts', 0) - performance.get('model_calls', 0)} |",
+            f"| SQL 累计耗时 | {sql_duration:.2f} 秒 |",
+            f"| SQL 调用 / 错误 | {performance.get('sql_calls', 0)} / {performance.get('sql_errors', 0)} |",
+            f"| 最大 SQL 长度 | {performance.get('max_sql_chars', 0)} 字符 |",
+            f"| terminate 调用 / 拒绝 | {performance.get('terminate_calls', 0)} / {performance.get('terminate_rejections', 0)} |",
+            "",
+            "### 最慢任务",
+            "",
+            "| Instance ID | 总耗时(秒) | 模型耗时(秒) | SQL耗时(秒) | SQL调用/错误 | terminate拒绝 | 最大SQL字符 |",
+            "|-------------|-------------|---------------|-------------|--------------|---------------|-------------|",
+        ])
+        profiled_stats = [
+            (instance_id, stat.get("performance", {}))
+            for instance_id, stat in stats.items()
+            if stat.get("performance")
+        ]
+        profiled_stats.sort(
+            key=lambda item: float(item[1].get("duration_seconds", 0)),
+            reverse=True,
+        )
+        for instance_id, profile in profiled_stats[:10]:
+            lines.append(
+                f"| {instance_id} | {float(profile.get('duration_seconds', 0)):.2f} "
+                f"| {float(profile.get('model_duration_seconds', 0)):.2f} "
+                f"| {float(profile.get('sql_duration_seconds', 0)):.2f} "
+                f"| {profile.get('sql_calls', 0)}/{profile.get('sql_errors', 0)} "
+                f"| {profile.get('terminate_rejections', 0)} "
+                f"| {profile.get('max_sql_chars', 0)} |"
+            )
+        lines.append("")
+    else:
+        lines.append("当前结果未包含性能剖面数据。\n")
+
     lines.extend([
         "---",
         "",
