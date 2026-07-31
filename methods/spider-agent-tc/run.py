@@ -60,11 +60,11 @@ def _safe_error(exc: BaseException, config: LoadedConfig | None = None) -> str:
 
 
 def check_snowflake(config: LoadedConfig) -> None:
-    if config.raw["tools"]["snowflake"]["mode"] != "live":
+    if config.raw["tools"]["sql"]["mode"] != "live":
         raise ConfigError("Snowflake connectivity checks are unavailable in mock mode")
     import snowflake.connector
 
-    settings = config.raw["tools"]["snowflake"]
+    settings = config.raw["tools"]["sql"]
     connection = snowflake.connector.connect(
         **config.secrets["snowflake"],
         login_timeout=settings["timeout_seconds"],
@@ -90,6 +90,7 @@ def check_dependencies() -> None:
         "requests": "requests",
         "rich": "rich",
         "snowflake-connector-python": "snowflake.connector",
+        "sqlglot": "sqlglot",
         "uvicorn": "uvicorn",
         "langgraph": "langgraph",
         "langchain-core": "langchain_core",
@@ -151,6 +152,7 @@ def _environment_versions() -> dict[str, str]:
         "uvicorn",
         "pandas",
         "snowflake-connector-python",
+        "sqlglot",
         "PyYAML",
         "langgraph",
         "langchain-core",
@@ -228,6 +230,8 @@ def start_server(config: LoadedConfig, port: int) -> subprocess.Popen:
         config.raw["server"]["host"],
         "--port",
         str(port),
+        "--run-dir",
+        str(config.experiment_dir),
     ]
     log_path = config.experiment_dir / "run.log"
     log_handle = log_path.open("a", encoding="utf-8")
@@ -312,8 +316,8 @@ def configure_file_logging(config: LoadedConfig) -> Path:
 
 
 def write_summary(config: LoadedConfig, summary: dict[str, Any]) -> None:
-    summary["snowflake_mode"] = config.raw["tools"]["snowflake"]["mode"]
-    summary["mock_run"] = config.raw["tools"]["snowflake"]["mode"] == "mock"
+    summary["snowflake_mode"] = config.raw["tools"]["sql"]["mode"]
+    summary["mock_run"] = config.raw["tools"]["sql"]["mode"] == "mock"
     summary["finished_at"] = datetime.now(timezone.utc).isoformat()
     (config.experiment_dir / "run-summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2),
@@ -329,6 +333,9 @@ def execute(config: LoadedConfig) -> int:
     port = find_available_port(config.raw["server"]["host"], config.raw["server"]["preferred_port"])
     run_preflight(config, port)
     prepare_experiment(config, port)
+    from servers.structured_tools import build_catalog
+
+    build_catalog(config)
     log_path = configure_file_logging(config)
 
     process = None

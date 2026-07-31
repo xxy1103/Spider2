@@ -101,8 +101,7 @@ def extract_sql_answers(exp_dir: Path) -> dict[str, Any]:
                 continue
             
             sql_file = submission_dir / f"{instance_id}.sql"
-            with open(sql_file, "w", encoding="utf-8") as f:
-                f.write(answer)
+            sql_file.write_bytes(answer.encode("utf-8"))
             
             processed_count += 1
             

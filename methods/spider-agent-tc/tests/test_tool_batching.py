@@ -71,6 +71,25 @@ def test_tool_batch_isolates_failures_and_unknown_tools(monkeypatch):
     assert "private failure detail" not in str(results)
 
 
+def test_tool_batch_returns_safe_validation_feedback(monkeypatch):
+    async def fake_execute_tool(name, **arguments):
+        raise ValueError("Table is outside current database scope")
+
+    monkeypatch.setattr(serve.tool_registry, "has_tool", lambda name: True)
+    monkeypatch.setattr(serve.tool_registry, "execute_tool", fake_execute_tool)
+
+    results = asyncio.run(
+        serve.execute_tool_batch([{"name": "execute_sql", "arguments": {}}])
+    )
+
+    assert results == [
+        {
+            "error": "Table is outside current database scope",
+            "error_type": "ValueError",
+        }
+    ]
+
+
 def test_message_processor_accepts_matching_result_list(monkeypatch):
     response = Mock()
     response.json.return_value = [{"content": "one"}, {"content": "two"}]
@@ -113,7 +132,6 @@ def test_message_processor_rejects_mismatched_result_count(monkeypatch):
 
 def test_agent_maps_ordered_results_to_every_tool_call_id(tmp_path):
     agent = object.__new__(LangGraphAgent)
-    agent.args = SimpleNamespace(databases_path=str(tmp_path))
     agent.message_processor = Mock()
     agent.message_processor.execute_tool_calls.return_value = [
         {"content": "first result"},
@@ -124,21 +142,26 @@ def test_agent_maps_ordered_results_to_every_tool_call_id(tmp_path):
         tool_calls=[
             {
                 "id": "call-first",
-                "name": "execute_snowflake_sql",
+                "name": "execute_sql",
                 "args": {"sql": "SELECT 1"},
             },
             {
                 "id": "call-second",
-                "name": "execute_bash",
-                "args": {"command": "pwd"},
+                "name": "search_schema",
+                "args": {"query": "value"},
             },
         ],
     )
     state = {
         "messages": [assistant_message],
-        "item": {"instance_id": "task", "db_id": "database"},
+        "item": {
+            "instance_id": "task",
+            "db_id": "database",
+            "instruction": "question",
+        },
         "conversation_history": [],
         "round_num": 1,
+        "rollout_idx": 0,
         "terminated": False,
         "error": None,
     }
@@ -153,3 +176,91 @@ def test_agent_maps_ordered_results_to_every_tool_call_id(tmp_path):
         "first result",
         "second result",
     ]
+    calls = agent.message_processor.execute_tool_calls.call_args.args[0]
+    assert calls[0]["arguments"]["_context"]["allowed_database"] == "database"
+    assert calls[1]["arguments"]["_context"]["instance_id"] == "task"
+
+
+def test_agent_only_terminates_when_validator_accepts():
+    agent = object.__new__(LangGraphAgent)
+    agent.message_processor = Mock()
+    assistant_message = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "id": "call-terminate",
+                "name": "terminate",
+                "args": {"answer": "SELECT 1"},
+            }
+        ],
+    )
+    state = {
+        "messages": [assistant_message],
+        "item": {
+            "instance_id": "task",
+            "db_id": "database",
+            "instruction": "question",
+        },
+        "conversation_history": [],
+        "round_num": 1,
+        "rollout_idx": 0,
+        "terminated": False,
+        "error": None,
+    }
+
+    agent.message_processor.execute_tool_calls.return_value = [
+        {"content": '{"accepted": false, "reason": "not executed"}'}
+    ]
+    rejected = agent._execute_tools_node(state)
+    assert rejected.get("terminated") is not True
+    assert rejected["messages"][0].tool_call_id == "call-terminate"
+
+    agent.message_processor.execute_tool_calls.return_value = [
+        {"content": '{"accepted": true, "sql_sha256": "abc"}'}
+    ]
+    accepted = agent._execute_tools_node(state)
+    assert accepted["terminated"] is True
+    assert accepted["messages"] == []
+
+
+def test_agent_rejects_terminate_batched_with_other_tools():
+    agent = object.__new__(LangGraphAgent)
+    agent.message_processor = Mock()
+    assistant_message = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "id": "call-query",
+                "name": "execute_sql",
+                "args": {"sql": "SELECT 1"},
+            },
+            {
+                "id": "call-terminate",
+                "name": "terminate",
+                "args": {"answer": "SELECT 1"},
+            },
+        ],
+    )
+    state = {
+        "messages": [assistant_message],
+        "item": {
+            "instance_id": "task",
+            "db_id": "database",
+            "instruction": "question",
+        },
+        "conversation_history": [],
+        "round_num": 1,
+        "rollout_idx": 0,
+        "terminated": False,
+        "error": None,
+    }
+
+    result = agent._execute_tools_node(state)
+
+    assert result.get("terminated") is not True
+    assert len(result["messages"]) == 2
+    assert all(
+        "terminate must be the only tool call" in message.content
+        for message in result["messages"]
+    )
+    agent.message_processor.execute_tool_calls.assert_not_called()

@@ -12,13 +12,13 @@ python run.py --config configs/smoke.yaml
 
 `run.sh` and the former collection of command-line overrides have been removed.
 
-## WSL and Conda setup
+## Conda setup
 
-Run the project from WSL because the schema exploration tool expects Linux shell
-commands.
+The Agent no longer receives a general-purpose shell tool. The structured tool
+server works from Windows PowerShell or WSL.
 
 ```bash
-cd /mnt/c/Users/ulna/Desktop/Spider2/methods/spider-agent-tc
+cd methods/spider-agent-tc
 conda env create -f environment.yml
 conda activate spider2-tc
 ```
@@ -60,18 +60,19 @@ experiment snapshots and error messages.
 ## First run
 
 Edit `model.name` in `configs/smoke.yaml` so it matches the model ID exposed by
-your OpenAI-compatible service. The default task selection contains only
-`sf_bq011`, with one thread and one rollout.
+your OpenAI-compatible service. The checked-in smoke configuration selects task
+indexes 0 through 49, with one thread and one rollout per task.
 
 ```bash
 conda activate spider2-tc
-cd /mnt/c/Users/ulna/Desktop/Spider2/methods/spider-agent-tc
+cd methods/spider-agent-tc
 python run.py --config configs/smoke.yaml
 ```
 
-The launcher performs all static checks first, then verifies Snowflake, performs
-a minimal model request, starts the tool server on port 5000 or the next available
-local port, and runs the selected task.
+The launcher performs all static checks first, rebuilds a temporary SQLite schema
+index for only the databases referenced by the selected tasks, verifies
+Snowflake, performs a minimal model request, starts the tool server on port 5000
+or the next available local port, and runs the selected tasks.
 
 Results are written to:
 
@@ -91,6 +92,10 @@ JSON files plus:
 - `run.log`: detailed Agent, tool-server, and evaluation diagnostics. The
   terminal stays focused on aggregate progress and writes credential-redacted
   details here.
+- `tool-state/schema-index.sqlite`: run-local searchable metadata for only the
+  selected databases.
+- `tool-state/<instance>/<rollout>/`: task-scoped SQL artifacts and execution
+  records. These files support validation and are not used directly by scoring.
 
 Each per-task conversation JSON file is refreshed atomically after every
 completed Agent graph step. Its current rollout record has
@@ -103,20 +108,13 @@ The process exits with status 1 when any selected task remains incomplete, statu
 ## Run without a Snowflake account
 
 Mock mode exercises configuration loading, task selection, the real model,
-tool-server lifecycle, XML tool calls, conversation persistence, and result
-summaries without connecting to Snowflake.
-
-Create a model-only secrets file:
-
-```bash
-cp configs/secrets.mock.example.yaml configs/secrets.yaml
-```
-
-Set your real model endpoint and API key in `configs/secrets.yaml`, then set the
-real model ID in `configs/mock.yaml` and run:
+structured tool calls, tool-server lifecycle, conversation persistence, and
+result summaries without connecting to Snowflake. Copy `configs/smoke.yaml` to
+an untracked experiment YAML, set `tools.sql.mode: mock`, and provide only the
+model credentials required by your endpoint:
 
 ```bash
-python run.py --config configs/mock.yaml
+python run.py --config path/to/your-mock.yaml
 ```
 
 Mock mode returns this deterministic fake query result:
@@ -134,12 +132,19 @@ To customize the fake response, edit:
 
 ```yaml
 tools:
-  snowflake:
+  sql:
     mode: mock
     mock:
       response_csv: |
         COLUMN_NAME
         fake-value
+preflight:
+  check_model: true
+  check_snowflake: false
+auto_evaluate:
+  enabled: false
+  timeout: 300
+  max_workers: 4
 ```
 
 For a real run, use `configs/smoke.yaml`, whose Snowflake mode is `live`, and
@@ -210,11 +215,41 @@ the current working directory.
 - `model`: model ID, sampling, request timeout, and finite retry policy.
 - `agent`: rounds, task concurrency, and rollout count.
 - `server`: bind address, preferred port, workers, startup timeout, and request timeout.
-- `tools`: Bash settings plus live/mock Snowflake mode, execution timeout, and returned-output limits.
+- `tools.catalog`: schema-search page size plus local sample row and character
+  limits. Oversized values are returned as bounded previews with truncation
+  metadata.
+- `tools.sql`: live/mock Snowflake mode, timeout, preview/pagination limits, and
+  maximum SQL length.
+- `tools.submission`: exact-execution and non-empty-result submission policy.
 - `preflight`: enable or disable live model and Snowflake connectivity checks.
 
 Unknown fields and incorrect types are rejected to prevent silently ignored
-configuration mistakes.
+configuration mistakes. Legacy `tools.bash` and `tools.snowflake` blocks fail
+with an explicit migration error.
+
+## Structured tool workflow
+
+The model can use only these task-scoped tools:
+
+1. `get_task_context` to read the question, external knowledge, allowed database,
+   and indexed schema summary.
+2. `search_schema` and `describe_table` to find and inspect relevant tables.
+3. `resolve_table_set` and `build_union_sql` to construct complete deterministic
+   SQL for date-sharded tables without abbreviations.
+4. `execute_sql` to validate scope and run one read-only Snowflake query, returning
+   at most 20 preview rows by default.
+5. `read_query_result` for explicit bounded pagination and `get_sql_text` to
+   recover an untruncated SQL artifact.
+6. `terminate(answer="<complete SQL>")` to submit the exact SQL text.
+
+Every call is bound to an instance, rollout, and allowed `db_id`. Cross-database
+references are rejected before Snowflake is contacted. A live submission is
+accepted only when its exact byte content has already executed successfully and
+returned at least one row. Mock executions can never satisfy this submission
+gate. Reaching `agent.max_rounds` without an accepted `terminate` leaves the
+rollout incomplete. These checks prevent incomplete or unexecuted submissions;
+they do not resolve semantic misunderstandings of the question, which remains
+the Agent's responsibility.
 
 ## Export submission SQL
 

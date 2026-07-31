@@ -168,6 +168,36 @@ def test_unknown_config_field_is_rejected():
         _validate_main(raw)
 
 
+def test_legacy_tool_configuration_has_clear_migration_error():
+    raw = load_smoke()
+    raw["model"]["name"] = "test-model"
+    raw["tools"] = {
+        "bash": {"timeout_seconds": 1, "max_output_chars": 100},
+        "snowflake": {
+            "mode": "mock",
+            "timeout_seconds": 1,
+            "max_output_chars": 100,
+            "mock": {"response_csv": "VALUE\n1"},
+        },
+    }
+    with pytest.raises(ConfigError, match="Legacy"):
+        _validate_main(raw)
+
+
+def test_mock_mode_disables_live_preflight_and_automatic_scoring():
+    raw = load_smoke()
+    raw["model"]["name"] = "test-model"
+    raw["tools"]["sql"]["mode"] = "mock"
+    raw["tools"]["sql"]["mock"] = {"response_csv": "VALUE\n1"}
+    raw["preflight"]["check_snowflake"] = False
+    raw["auto_evaluate"]["enabled"] = False
+    _validate_main(raw)
+
+    raw["auto_evaluate"]["enabled"] = True
+    with pytest.raises(ConfigError, match="auto_evaluate.enabled"):
+        _validate_main(raw)
+
+
 @pytest.mark.parametrize(
     "tasks,expected",
     [

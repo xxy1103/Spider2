@@ -1,10 +1,10 @@
 """LangGraph-based agent implementation using OpenAI official tool calling.
 
 This module replaces the legacy text-parsing agent loop with a LangGraph
-StateGraph, while preserving the original agent behavior:
+StateGraph, while preserving the result format and execution lifecycle:
 - Same initial prompt construction (via prompt_builders)
 - Same tool execution path (HTTP POST to the FastAPI tool server)
-- Same termination conditions (terminate tool call or max_rounds)
+- A terminate tool call succeeds only after server-side validation
 - Same result persistence format (via FileManager)
 """
 
@@ -33,70 +33,9 @@ from .file_manager import FileManager
 from .message_processor import MessageProcessor
 from .progress import TaskProgressReporter
 from .prompt_builders import get_prompt_builder
+from servers.structured_tools import get_openai_tools
 
 logger = logging.getLogger(__name__)
-
-# OpenAI tool schema definitions. These mirror the tools previously described
-# in the system prompt's <tools> XML block. Descriptions are kept aligned with
-# the original prompt text.
-TOOLS: list[dict[str, Any]] = [
-    {
-        "type": "function",
-        "function": {
-            "name": "execute_snowflake_sql",
-            "description": "Execute a SQL query in Snowflake and retrieve the results.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "sql": {
-                        "type": "string",
-                        "description": "The SQL query to execute in the Snowflake environment.",
-                    }
-                },
-                "required": ["sql"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "execute_bash",
-            "description": "Execute a bash command to explore the database schema. You are already in the base directory of schema information. Please use relative paths to explore the schema folder.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "command": {
-                        "type": "string",
-                        "description": "The bash command to execute, typically used to view file contents (e.g., 'cat filename' or 'ls directory').",
-                    },
-                    "work_dir": {
-                        "type": "string",
-                        "description": "The working directory for the command (optional).",
-                    },
-                },
-                "required": ["command"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "terminate",
-            "description": "Submit your final solution once you're confident you have the optimal SQL query that correctly answers the question.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "answer": {
-                        "type": "string",
-                        "description": "Your final, optimized SQL query that completely solves the problem. Or no answer.",
-                    }
-                },
-                "required": ["answer"],
-            },
-        },
-    },
-]
-
 
 class AgentState(TypedDict):
     """State carried through the LangGraph execution."""
@@ -105,6 +44,7 @@ class AgentState(TypedDict):
     item: dict[str, Any]
     conversation_history: list[dict[str, Any]]
     round_num: int
+    rollout_idx: int
     terminated: bool
     error: str | None
 
@@ -123,6 +63,7 @@ class LangGraphAgent:
         self.file_manager = FileManager(args)
         self.message_processor = MessageProcessor(args)
         self.prompt_builder = get_prompt_builder(args.prompt_strategy)
+        self.tools = get_openai_tools()
 
         self.processed_instances = defaultdict(int)
         self.graph = self._build_graph()
@@ -143,7 +84,7 @@ class LangGraphAgent:
                 response = self.model_client.chat.completions.create(
                     model=self.args.model,
                     messages=openai_messages,
-                    tools=TOOLS,
+                    tools=self.tools,
                     tool_choice="auto",
                     temperature=self.args.temperature,
                     top_p=self.args.top_p,
@@ -280,18 +221,40 @@ class LangGraphAgent:
         if not isinstance(last_message, AIMessage) or not last_message.tool_calls:
             return {}
 
-        # Terminate short-circuit (behavior preserved: stop without executing)
-        if any(tc["name"] == "terminate" for tc in last_message.tool_calls):
-            return {"terminated": True}
+        if len(last_message.tool_calls) > 1 and any(
+            tc["name"] == "terminate" for tc in last_message.tool_calls
+        ):
+            reason = json.dumps(
+                {
+                    "accepted": False,
+                    "reason": "terminate must be the only tool call in its assistant message.",
+                }
+            )
+            tool_messages = [
+                ToolMessage(content=reason, tool_call_id=tc["id"])
+                for tc in last_message.tool_calls
+            ]
+            history_entries = [
+                {"role": "tool", "content": reason}
+                for _ in last_message.tool_calls
+            ]
+            return {
+                "messages": tool_messages,
+                "conversation_history": (
+                    state["conversation_history"] + history_entries
+                ),
+            }
 
         tool_calls_for_execution: list[dict[str, Any]] = []
         for tc in last_message.tool_calls:
             arguments = dict(tc["args"])
-            # Preserve legacy behavior: inject work_dir for execute_bash
-            if tc["name"] == "execute_bash" and "work_dir" not in arguments:
-                arguments["work_dir"] = os.path.join(
-                    self.args.databases_path, state["item"]["db_id"]
-                )
+            arguments["_context"] = {
+                "instance_id": state["item"]["instance_id"],
+                "rollout_idx": state["rollout_idx"],
+                "allowed_database": state["item"]["db_id"],
+                "instruction": state["item"]["instruction"],
+                "external_knowledge": state["item"].get("external_knowledge"),
+            }
             tool_calls_for_execution.append(
                 {"name": tc["name"], "arguments": arguments}
             )
@@ -302,17 +265,30 @@ class LangGraphAgent:
 
         tool_messages: list[ToolMessage] = []
         history_entries: list[dict[str, Any]] = []
+        accepted_termination = False
         for tc, exec_result in zip(last_message.tool_calls, exec_results):
             result_content = exec_result.get("content", str(exec_result))
+            if tc["name"] == "terminate":
+                try:
+                    accepted_termination = bool(
+                        json.loads(result_content).get("accepted")
+                    )
+                except (json.JSONDecodeError, AttributeError):
+                    accepted_termination = False
+                if accepted_termination:
+                    continue
             tool_messages.append(
                 ToolMessage(content=result_content, tool_call_id=tc["id"])
             )
             history_entries.append({"role": "tool", "content": result_content})
 
-        return {
+        result: dict[str, Any] = {
             "messages": tool_messages,
             "conversation_history": state["conversation_history"] + history_entries,
         }
+        if accepted_termination:
+            result["terminated"] = True
+        return result
 
     # ------------------------------------------------------------------
     # Routing
@@ -323,13 +299,9 @@ class LangGraphAgent:
         last_message = state["messages"][-1]
         if isinstance(last_message, AIMessage) and last_message.tool_calls:
             return "execute_tools"
-        # No tool calls: legacy behavior nudged the model with a format prompt
-        # and continued. With official tool calling this means the model
-        # answered in plain text; we treat it as a normal (non-terminating)
-        # continuation only if rounds remain.
         if state["round_num"] >= self.args.max_rounds:
             return "end"
-        return "end"
+        return "call_model"
 
     def _route_after_tools(self, state: AgentState) -> str:
         if state.get("terminated"):
@@ -348,7 +320,11 @@ class LangGraphAgent:
         workflow.add_conditional_edges(
             "call_model",
             self._route_after_model,
-            {"execute_tools": "execute_tools", "end": END},
+            {
+                "execute_tools": "execute_tools",
+                "call_model": "call_model",
+                "end": END,
+            },
         )
         workflow.add_conditional_edges(
             "execute_tools",
@@ -410,6 +386,7 @@ class LangGraphAgent:
                 "item": item,
                 "conversation_history": list(initial_messages),
                 "round_num": 0,
+                "rollout_idx": rollout_idx,
                 "terminated": False,
                 "error": None,
             }
@@ -417,7 +394,9 @@ class LangGraphAgent:
             final_state = initial_state
             last_state = initial_state
             for current_state in self.graph.stream(
-                initial_state, stream_mode="values"
+                initial_state,
+                {"recursion_limit": self.args.max_rounds * 2 + 5},
+                stream_mode="values",
             ):
                 final_state = current_state
                 last_state = current_state

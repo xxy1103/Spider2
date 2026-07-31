@@ -48,6 +48,7 @@ def test_process_single_item_refreshes_file_after_each_graph_step(tmp_path):
         output_folder=str(tmp_path),
         rollout_number=1,
         model_api_key="secret",
+        max_rounds=60,
     )
     agent = object.__new__(LangGraphAgent)
     agent.args = args
@@ -62,14 +63,15 @@ def test_process_single_item_refreshes_file_after_each_graph_step(tmp_path):
     observations = []
 
     class StreamingGraph:
-        def stream(self, initial_state, stream_mode):
+        def stream(self, initial_state, config, stream_mode):
+            assert config["recursion_limit"] == 125
             assert stream_mode == "values"
             assistant = AIMessage(
                 content="",
                 tool_calls=[
                     {
                         "id": "call-1",
-                        "name": "execute_snowflake_sql",
+                        "name": "execute_sql",
                         "args": {"sql": "SELECT 1"},
                     }
                 ],
@@ -84,7 +86,7 @@ def test_process_single_item_refreshes_file_after_each_graph_step(tmp_path):
                         "content": "",
                         "tool_calls": [
                             {
-                                "name": "execute_snowflake_sql",
+                                "name": "execute_sql",
                                 "arguments": {"sql": "SELECT 1"},
                             }
                         ],
@@ -135,6 +137,7 @@ def test_stream_failure_keeps_last_persisted_conversation(tmp_path):
         output_folder=str(tmp_path),
         rollout_number=1,
         model_api_key="secret",
+        max_rounds=60,
     )
     agent = object.__new__(LangGraphAgent)
     agent.args = args
@@ -147,7 +150,8 @@ def test_stream_failure_keeps_last_persisted_conversation(tmp_path):
     )
 
     class FailingGraph:
-        def stream(self, initial_state, stream_mode):
+        def stream(self, initial_state, config, stream_mode):
+            assert config["recursion_limit"] == 125
             yield {
                 **initial_state,
                 "messages": [

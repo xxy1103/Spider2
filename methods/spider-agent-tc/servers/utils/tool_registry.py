@@ -1,6 +1,3 @@
-import importlib
-import inspect
-import pkgutil
 import asyncio
 from typing import Dict, Any, Callable, List, Optional
 import logging
@@ -36,19 +33,10 @@ class ToolRegistry:
     def load_tools(self, config=None):
         logger.info("Loading tools...")
 
-        import servers.tools as tools_package
-        
-        for _, module_name, is_pkg in pkgutil.iter_modules(tools_package.__path__, tools_package.__name__ + '.'):
-            if not is_pkg:
-                try:
-                    module = importlib.import_module(module_name)
-                    
-                    if config is not None and hasattr(module, "configure"):
-                        module.configure(config)
-                    if hasattr(module, 'register_tools'):
-                        module.register_tools(self)
-                except Exception as e:
-                    logger.error(f"Error loading module {module_name}: {str(e)}")
+        from servers import structured_tools
+
+        structured_tools.configure(config)
+        structured_tools.register_tools(self)
         
         logger.info(f"Loaded {len(self.tools)} tools: {', '.join(self.tools.keys())}")
 

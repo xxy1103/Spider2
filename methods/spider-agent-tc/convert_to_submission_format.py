@@ -72,8 +72,7 @@ def extract_sql_answers(input_dir, output_folder):
             
             # Save to SQL file
             sql_file = output_path / f"{instance_id}.sql"
-            with open(sql_file, 'w', encoding='utf-8') as f:
-                f.write(answer)
+            sql_file.write_bytes(answer.encode("utf-8"))
             
             processed_count += 1
             print(f"Extracted SQL from {json_file.name} -> {instance_id}.sql")

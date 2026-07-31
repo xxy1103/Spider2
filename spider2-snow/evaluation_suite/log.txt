@@ -1,16 +1,1 @@
-Evaluating 1 task(s)...
-  ✅ sf_bq011: score=1
-
-  📊 评分完成: 1/1 正确 (100.00%)
-
-[3/4] 收集对话统计...
-  ✅ 统计完成: 1 个任务
-
-[4/4] 生成报告...
-  ✅ 报告已生成: /mnt/c/Users/ulna/Desktop/Spider2/methods/spider-agent-tc/results/smoke-test-pro/REPORT.md
-
-======================================================================
-🎉 自动评分完成！准确率: 100.00%
-======================================================================
-
-Run completed successfully
+运行结束，详情见 /mnt/c/Users/ulna/Desktop/Spider2/methods/spider-agent-tc/results/first-50-test/20260730-160456/run.log

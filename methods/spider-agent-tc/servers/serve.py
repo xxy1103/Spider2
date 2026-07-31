@@ -1,6 +1,8 @@
 import argparse
 import asyncio
 import logging
+from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 import uvicorn
@@ -36,6 +38,12 @@ async def execute_single_tool(tool_call: dict[str, Any]) -> dict[str, Any]:
 
     try:
         return await tool_registry.execute_tool(tool_name, **arguments)
+    except ValueError as exc:
+        logger.info("Tool input rejected for %s: %s", tool_name, exc)
+        return {
+            "error": str(exc),
+            "error_type": type(exc).__name__,
+        }
     except Exception as exc:  # noqa: BLE001
         logger.error("Tool execution failed for %s: %s", tool_name, type(exc).__name__)
         return {"error": f"Tool execution failed: {type(exc).__name__}"}
@@ -76,16 +84,24 @@ async def execute_tools(request: Request) -> JSONResponse:
 async def health() -> dict:
     return {"status": "ok", "tools": sorted(tool_registry.tools)}
 
+@app.get("/tools")
+async def tool_schemas() -> dict:
+    from servers.structured_tools import get_openai_tools
+
+    return {"tools": get_openai_tools()}
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Tools Server")
     parser.add_argument("--config", required=True, help="Path to the experiment YAML file")
     parser.add_argument("--port", required=True, type=int, help="Resolved server port")
     parser.add_argument("--host", required=True, type=str, help="Server host")
+    parser.add_argument("--run-dir", required=True, type=str, help="Resolved run directory")
     return parser.parse_args()
 
 def main():
     args = parse_args()
     config = load_config(args.config)
+    config = replace(config, run_dir=Path(args.run_dir).resolve())
     redacting_filter = RedactingFilter(configured_sensitive_values(config))
     for handler in logging.getLogger().handlers:
         handler.addFilter(redacting_filter)

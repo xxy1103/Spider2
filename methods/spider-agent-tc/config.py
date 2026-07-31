@@ -60,10 +60,23 @@ _SCHEMA = {
         "startup_timeout_seconds",
         "request_timeout_seconds",
     },
-    "tools": {"bash", "snowflake"},
-    "tools.bash": {"timeout_seconds", "max_output_chars"},
-    "tools.snowflake": {"mode", "timeout_seconds", "max_output_chars", "mock"},
-    "tools.snowflake.mock": {"response_csv"},
+    "tools": {"catalog", "sql", "submission"},
+    "tools.catalog": {
+        "page_size",
+        "max_page_size",
+        "sample_rows",
+        "max_sample_chars",
+    },
+    "tools.sql": {
+        "mode",
+        "timeout_seconds",
+        "preview_rows",
+        "max_page_size",
+        "max_sql_chars",
+        "mock",
+    },
+    "tools.submission": {"require_executed", "reject_empty"},
+    "tools.sql.mock": {"response_csv"},
     "preflight": {"check_model", "check_snowflake"},
     "auto_evaluate": {"enabled", "timeout", "max_workers"},
 }
@@ -144,6 +157,14 @@ def _string_list(value: Any, location: str) -> list[str]:
 
 
 def _validate_main(raw: dict[str, Any]) -> None:
+    legacy_tools = raw.get("tools")
+    if isinstance(legacy_tools, dict) and (
+        "bash" in legacy_tools or "snowflake" in legacy_tools
+    ):
+        raise ConfigError(
+            "Legacy tools.bash/tools.snowflake configuration is no longer supported; "
+            "migrate to tools.catalog/tools.sql/tools.submission"
+        )
     _reject_unknown(raw, _TOP_LEVEL, "config")
     # auto_evaluate is optional
     required_sections = _TOP_LEVEL - {"auto_evaluate"}
@@ -162,32 +183,42 @@ def _validate_main(raw: dict[str, Any]) -> None:
     retry = _mapping(raw["model"], "retry", "model")
     _reject_unknown(retry, _SCHEMA["model.retry"], "model.retry")
     _required(retry, _SCHEMA["model.retry"], "model.retry")
-    for tool in ("bash",):
+    for tool in ("catalog", "submission"):
         settings = _mapping(raw["tools"], tool, "tools")
         _reject_unknown(settings, _SCHEMA[f"tools.{tool}"], f"tools.{tool}")
         _required(settings, _SCHEMA[f"tools.{tool}"], f"tools.{tool}")
-    snowflake = _mapping(raw["tools"], "snowflake", "tools")
-    _reject_unknown(snowflake, _SCHEMA["tools.snowflake"], "tools.snowflake")
+    sql = _mapping(raw["tools"], "sql", "tools")
+    _reject_unknown(sql, _SCHEMA["tools.sql"], "tools.sql")
     _required(
-        snowflake,
-        {"mode", "timeout_seconds", "max_output_chars"},
-        "tools.snowflake",
+        sql,
+        {
+            "mode",
+            "timeout_seconds",
+            "preview_rows",
+            "max_page_size",
+            "max_sql_chars",
+        },
+        "tools.sql",
     )
-    if snowflake["mode"] not in {"live", "mock"}:
-        raise ConfigError("tools.snowflake.mode must be 'live' or 'mock'")
-    if snowflake["mode"] == "mock":
-        mock = _mapping(snowflake, "mock", "tools.snowflake")
-        _reject_unknown(mock, _SCHEMA["tools.snowflake.mock"], "tools.snowflake.mock")
-        _required(mock, _SCHEMA["tools.snowflake.mock"], "tools.snowflake.mock")
+    if sql["mode"] not in {"live", "mock"}:
+        raise ConfigError("tools.sql.mode must be 'live' or 'mock'")
+    if sql["mode"] == "mock":
+        mock = _mapping(sql, "mock", "tools.sql")
+        _reject_unknown(mock, _SCHEMA["tools.sql.mock"], "tools.sql.mock")
+        _required(mock, _SCHEMA["tools.sql.mock"], "tools.sql.mock")
         mock["response_csv"] = _string(
-            mock["response_csv"], "tools.snowflake.mock.response_csv"
+            mock["response_csv"], "tools.sql.mock.response_csv"
         )
         if raw["preflight"]["check_snowflake"]:
             raise ConfigError(
-                "preflight.check_snowflake must be false when tools.snowflake.mode is 'mock'"
+                "preflight.check_snowflake must be false when tools.sql.mode is 'mock'"
             )
-    elif "mock" in snowflake:
-        raise ConfigError("tools.snowflake.mock is only allowed when mode is 'mock'")
+        if raw.get("auto_evaluate", {}).get("enabled", False):
+            raise ConfigError(
+                "auto_evaluate.enabled must be false when tools.sql.mode is 'mock'"
+            )
+    elif "mock" in sql:
+        raise ConfigError("tools.sql.mock is only allowed when mode is 'mock'")
 
     experiment = raw["experiment"]
     experiment["name"] = _string(experiment["name"], "experiment.name")
@@ -238,9 +269,20 @@ def _validate_main(raw: dict[str, Any]) -> None:
     _positive_int(server["workers_per_tool"], "server.workers_per_tool")
     for key in ("startup_timeout_seconds", "request_timeout_seconds"):
         _positive_number(server[key], f"server.{key}")
-    for tool in ("bash", "snowflake"):
-        _positive_number(raw["tools"][tool]["timeout_seconds"], f"tools.{tool}.timeout_seconds")
-        _positive_int(raw["tools"][tool]["max_output_chars"], f"tools.{tool}.max_output_chars")
+    catalog = raw["tools"]["catalog"]
+    for key in ("page_size", "max_page_size", "sample_rows", "max_sample_chars"):
+        _positive_int(catalog[key], f"tools.catalog.{key}")
+    if catalog["page_size"] > catalog["max_page_size"]:
+        raise ConfigError("tools.catalog.page_size must not exceed max_page_size")
+    _positive_number(sql["timeout_seconds"], "tools.sql.timeout_seconds")
+    for key in ("preview_rows", "max_page_size", "max_sql_chars"):
+        _positive_int(sql[key], f"tools.sql.{key}")
+    if sql["preview_rows"] > sql["max_page_size"]:
+        raise ConfigError("tools.sql.preview_rows must not exceed max_page_size")
+    submission = raw["tools"]["submission"]
+    for key in ("require_executed", "reject_empty"):
+        if not isinstance(submission[key], bool):
+            raise ConfigError(f"tools.submission.{key} must be true or false")
     for key in ("check_model", "check_snowflake"):
         if not isinstance(raw["preflight"][key], bool):
             raise ConfigError(f"preflight.{key} must be true or false")
@@ -444,7 +486,7 @@ def load_config(config_path: str | Path) -> LoadedConfig:
 
     secrets_path = _resolve_repo_path(repo_root, raw["secrets_file"], "secrets_file")
     secrets = _read_yaml(secrets_path, "Secrets file")
-    snowflake_mode = raw["tools"]["snowflake"]["mode"]
+    snowflake_mode = raw["tools"]["sql"]["mode"]
     _validate_secrets(secrets, snowflake_mode)
 
     items = _load_jsonl(paths["input_file"])
