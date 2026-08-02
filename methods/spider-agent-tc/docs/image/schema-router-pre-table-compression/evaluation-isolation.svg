@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">Schema Router 评测与标签隔离</title>
+  <desc id="desc">官方 SQL 只进入离线标签生成器和评分器，Router 仅接收任务与本地元数据。开发集和留出集采用固定切分。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#58748d"/></marker>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="4" stdDeviation="7" flood-color="#17324d" flood-opacity="0.13"/></filter>
+  </defs>
+  <rect width="1280" height="720" fill="#f7f9fc"/>
+  <text x="70" y="70" font-family="Microsoft YaHei, Arial, sans-serif" font-size="34" font-weight="700" fill="#193750">评测隔离：官方 SQL 只用于打标签，不进入 Router 上下文</text>
+  <text x="70" y="108" font-family="Microsoft YaHei, Arial, sans-serif" font-size="18" fill="#5c7388">固定切分、哈希指纹和留出集门槛共同降低提示词调参与数据泄漏风险</text>
+
+  <g filter="url(#shadow)">
+    <rect x="70" y="170" width="300" height="180" rx="22" fill="#e6f0fa" stroke="#83a8c7"/>
+    <text x="220" y="215" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="23" font-weight="700" fill="#285777">Router 可见输入</text>
+    <text x="220" y="255" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="17" fill="#35536c">任务问题与 External Knowledge</text>
+    <text x="220" y="287" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="17" fill="#35536c">Schema / DDL / 有界样例</text>
+    <text x="220" y="319" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="17" fill="#35536c">允许数据库内的表族目录</text>
+
+    <rect x="490" y="170" width="300" height="180" rx="22" fill="#f1eafa" stroke="#a38ac1"/>
+    <text x="640" y="215" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="23" font-weight="700" fill="#664e84">Schema Router</text>
+    <text x="640" y="255" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="17" fill="#435a70">输出候选表族与物理表</text>
+    <text x="640" y="287" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="17" fill="#435a70">记录工具轨迹和 Token / 耗时</text>
+    <text x="640" y="319" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="16" fill="#765f8e">不执行 SQL，不读取答案</text>
+
+    <rect x="910" y="170" width="300" height="180" rx="22" fill="#e8f5ef" stroke="#83b69f"/>
+    <text x="1060" y="215" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="23" font-weight="700" fill="#2b6950">Router 预测</text>
+    <text x="1060" y="255" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="17" fill="#355f4f">候选 Family 排名</text>
+    <text x="1060" y="287" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="17" fill="#355f4f">展开后的 Physical Tables</text>
+    <text x="1060" y="319" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="17" fill="#355f4f">Tier / Role / Reason</text>
+  </g>
+  <line x1="370" y1="260" x2="480" y2="260" stroke="#58748d" stroke-width="4" marker-end="url(#arrow)"/>
+  <line x1="790" y1="260" x2="900" y2="260" stroke="#58748d" stroke-width="4" marker-end="url(#arrow)"/>
+
+  <g filter="url(#shadow)">
+    <rect x="70" y="445" width="300" height="160" rx="22" fill="#fff0ed" stroke="#d08d81"/>
+    <text x="220" y="488" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="23" font-weight="700" fill="#8d463b">120 份官方 SQL</text>
+    <text x="220" y="527" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="17" fill="#6f514b">sqlglot 解析真实引用表</text>
+    <text x="220" y="559" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="17" fill="#6f514b">映射 Physical Table 与 Family</text>
+    <text x="220" y="588" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="14" fill="#986b63">标签不会进入上方模型链路</text>
+
+    <rect x="490" y="425" width="300" height="200" rx="22" fill="#fff4e4" stroke="#d0a363"/>
+    <text x="640" y="468" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="23" font-weight="700" fill="#80551f">固定分层切分</text>
+    <text x="640" y="507" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="17" fill="#5e523f">全量评测：当前 120 题</text>
+    <text x="640" y="539" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="17" fill="#5e523f">所有 Rollout 独立计分</text>
+    <text x="640" y="571" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="16" fill="#735f43">按库规模、金标表数、变体性分层</text>
+    <text x="640" y="599" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="14" fill="#8d6b40">task-set / catalog / label 均带哈希</text>
+
+    <rect x="910" y="425" width="300" height="200" rx="22" fill="#ffffff" stroke="#9eb3c5"/>
+    <text x="1060" y="468" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="23" font-weight="700" fill="#294d69">离线评分器</text>
+    <text x="1060" y="507" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="17" fill="#36546b">全覆盖率与 Recall</text>
+    <text x="1060" y="539" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="17" fill="#36546b">压缩率与 Recall@K</text>
+    <text x="1060" y="571" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="17" fill="#36546b">稳定性、越权与性能</text>
+    <text x="1060" y="599" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="14" fill="#647b8e">留出集才应用通过门槛</text>
+  </g>
+  <line x1="370" y1="525" x2="480" y2="525" stroke="#b46f64" stroke-width="4" marker-end="url(#arrow)"/>
+  <line x1="790" y1="525" x2="900" y2="525" stroke="#58748d" stroke-width="4" marker-end="url(#arrow)"/>
+  <path d="M1060 415 C1060 380, 1060 380, 1060 360" fill="none" stroke="#58748d" stroke-width="4" marker-end="url(#arrow)"/>
+  <rect x="70" y="658" width="1140" height="34" rx="17" fill="#18344f"/>
+  <text x="640" y="681" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="15" fill="#ffffff">评测目标：在尽可能高的全覆盖率前提下，最大限度缩小主 Agent 后续需要面对的表空间</text>
+</svg>

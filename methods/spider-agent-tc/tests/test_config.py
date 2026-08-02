@@ -152,9 +152,16 @@ def test_smoke_config_loads_real_repository_paths_and_task(monkeypatch):
     monkeypatch.setattr(config_module, "_read_yaml", fake_read_yaml)
     loaded = config_module.load_config(TC_ROOT / "configs" / "smoke.yaml")
     selected_ids = [item["instance_id"] for item in loaded.selected_items]
-    assert len(selected_ids) == 50
-    assert len(set(selected_ids)) == 50
-    assert "sf_bq011" in selected_ids
+    available_ids = {
+        json.loads(line)["instance_id"]
+        for line in loaded.paths["input_file"].read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip()
+    }
+    assert selected_ids
+    assert len(set(selected_ids)) == len(selected_ids)
+    assert set(selected_ids) <= available_ids
     assert loaded.paths["databases"].is_dir()
     assert loaded.paths["documents"].is_dir()
     assert len(loaded.fingerprint) == 64

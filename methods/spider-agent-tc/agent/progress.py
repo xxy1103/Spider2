@@ -42,8 +42,9 @@ class RuntimeMetricsColumn(ProgressColumn):
     def render(self, task: Task) -> Text:
         elapsed_seconds = task.elapsed or 0.0
         completed = int(task.completed)
-        if completed > 0 and elapsed_seconds > 0:
-            tasks_per_hour = completed * 3600 / elapsed_seconds
+        newly_completed = completed - int(task.fields.get("skipped", 0))
+        if newly_completed > 0 and elapsed_seconds > 0:
+            tasks_per_hour = newly_completed * 3600 / elapsed_seconds
         else:
             tasks_per_hour = None
         return Text(
@@ -59,6 +60,7 @@ class ProgressSnapshot:
     running: int
     successful: int
     failed: int
+    skipped: int
     elapsed_seconds: float
     tasks_per_hour: float | None
 
@@ -73,14 +75,24 @@ class TaskProgressReporter:
         *,
         stream: TextIO = sys.stdout,
         is_terminal: bool | None = None,
+        initial_successful: int = 0,
+        initial_failed: int = 0,
+        skipped: int = 0,
     ) -> None:
+        if min(initial_successful, initial_failed, skipped) < 0:
+            raise ValueError("Initial progress counters must not be negative")
+        if skipped > initial_successful:
+            raise ValueError("Skipped tasks must be included in initial successes")
+        if initial_successful + initial_failed > total:
+            raise ValueError("Initial completed tasks exceed configured total")
         self.label = label
         self.total = total
         self._stream = stream
         self._lock = threading.Lock()
         self._running = 0
-        self._successful = 0
-        self._failed = 0
+        self._successful = initial_successful
+        self._failed = initial_failed
+        self._skipped = skipped
         self._started_at: float | None = None
         self._console = Console(file=stream, force_terminal=is_terminal)
         self._is_terminal = (
@@ -106,7 +118,8 @@ class TaskProgressReporter:
                     "已结束 {task.completed:.0f}/{task.total:.0f}  "
                     "进行中 {task.fields[running]}  "
                     "成功 {task.fields[successful]}  "
-                    "失败 {task.fields[failed]}"
+                    "失败 {task.fields[failed]}  "
+                    "跳过 {task.fields[skipped]}"
                 ),
                 RuntimeMetricsColumn(),
                 console=self._console,
@@ -116,11 +129,13 @@ class TaskProgressReporter:
             self._task_id = self._progress.add_task(
                 self.label,
                 total=self.total,
+                completed=self._successful + self._failed,
                 running=0,
-                successful=0,
-                failed=0,
+                successful=self._successful,
+                failed=self._failed,
+                skipped=self._skipped,
             )
-        elif self.total == 0:
+        elif self.total == 0 or self._successful or self._failed:
             self._write_snapshot(self._snapshot_unlocked())
         return self
 
@@ -156,9 +171,10 @@ class TaskProgressReporter:
             if self._started_at is not None
             else 0.0
         )
+        newly_completed = completed - self._skipped
         tasks_per_hour = (
-            completed * 3600 / elapsed_seconds
-            if completed > 0 and elapsed_seconds > 0
+            newly_completed * 3600 / elapsed_seconds
+            if newly_completed > 0 and elapsed_seconds > 0
             else None
         )
         return ProgressSnapshot(
@@ -167,6 +183,7 @@ class TaskProgressReporter:
             running=self._running,
             successful=self._successful,
             failed=self._failed,
+            skipped=self._skipped,
             elapsed_seconds=elapsed_seconds,
             tasks_per_hour=tasks_per_hour,
         )
@@ -181,6 +198,7 @@ class TaskProgressReporter:
             running=snapshot.running,
             successful=snapshot.successful,
             failed=snapshot.failed,
+            skipped=snapshot.skipped,
             refresh=True,
         )
 
@@ -188,7 +206,7 @@ class TaskProgressReporter:
         print(
             f"{self.label}: 已结束 {snapshot.completed}/{snapshot.total}  "
             f"进行中 {snapshot.running}  成功 {snapshot.successful}  "
-            f"失败 {snapshot.failed}  "
+            f"失败 {snapshot.failed}  跳过 {snapshot.skipped}  "
             f"已运行 {_format_duration(snapshot.elapsed_seconds)}  "
             f"速度 {_format_rate(snapshot.tasks_per_hour)}",
             file=self._stream,

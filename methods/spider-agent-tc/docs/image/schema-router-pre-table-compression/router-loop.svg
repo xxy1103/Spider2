@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" role="img" aria-labelledby="title desc">
+  <title id="title">Schema Router 子 Agent 有界工具循环</title>
+  <desc id="desc">子 Agent 在有限轮次内调用四个元数据工具，提交候选表选择；最后一轮只允许提交，失败后还有一次格式修复。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#59758e"/></marker>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="4" stdDeviation="7" flood-color="#17324d" flood-opacity="0.13"/></filter>
+  </defs>
+  <rect width="1280" height="760" fill="#f7f9fc"/>
+  <text x="70" y="70" font-family="Microsoft YaHei, Arial, sans-serif" font-size="34" font-weight="700" fill="#193750">子 Agent：有界探索、强制提交、一次格式修复</text>
+  <text x="70" y="108" font-family="Microsoft YaHei, Arial, sans-serif" font-size="18" fill="#5c7388">语义判断交给模型，数据库边界与输出合法性由确定性代码控制</text>
+
+  <g filter="url(#shadow)">
+    <rect x="70" y="170" width="230" height="110" rx="18" fill="#e6f0fa" stroke="#7fa5c6"/>
+    <text x="185" y="211" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="21" font-weight="700" fill="#285777">首轮消息</text>
+    <text x="185" y="242" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="16" fill="#35536c">问题 + 外部知识</text>
+    <text x="185" y="265" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="16" fill="#35536c">数据库 + 表族总览</text>
+
+    <rect x="400" y="150" width="300" height="150" rx="22" fill="#f1eafa" stroke="#a18aba"/>
+    <text x="550" y="194" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="24" font-weight="700" fill="#664e84">Schema Router 模型</text>
+    <text x="550" y="230" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="17" fill="#435a70">判断事实表、过滤表、维表</text>
+    <text x="550" y="257" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="17" fill="#435a70">桥接表、地理表与参考表</text>
+    <text x="550" y="284" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="15" fill="#765f8e">默认最多 6 轮、24 次探索调用</text>
+
+    <rect x="805" y="135" width="405" height="245" rx="22" fill="#ffffff" stroke="#9eb3c5"/>
+    <text x="1007" y="176" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="22" font-weight="700" fill="#294d69">只读元数据工具</text>
+    <rect x="840" y="200" width="335" height="36" rx="10" fill="#edf4f9"/><text x="1007" y="224" text-anchor="middle" font-family="Consolas, Microsoft YaHei, monospace" font-size="15" fill="#294d69">list_table_families</text>
+    <rect x="840" y="245" width="335" height="36" rx="10" fill="#edf4f9"/><text x="1007" y="269" text-anchor="middle" font-family="Consolas, Microsoft YaHei, monospace" font-size="15" fill="#294d69">search_table_candidates</text>
+    <rect x="840" y="290" width="335" height="36" rx="10" fill="#edf4f9"/><text x="1007" y="314" text-anchor="middle" font-family="Consolas, Microsoft YaHei, monospace" font-size="15" fill="#294d69">describe_table_family</text>
+    <rect x="840" y="335" width="335" height="36" rx="10" fill="#edf4f9"/><text x="1007" y="359" text-anchor="middle" font-family="Consolas, Microsoft YaHei, monospace" font-size="15" fill="#294d69">resolve_family_variants</text>
+
+    <rect x="400" y="450" width="300" height="108" rx="22" fill="#e8f5ef" stroke="#83b69f"/>
+    <text x="550" y="491" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="22" font-weight="700" fill="#2b6950">结构化提交</text>
+    <text x="550" y="524" text-anchor="middle" font-family="Consolas, Microsoft YaHei, monospace" font-size="15" fill="#355f4f">submit_table_selection</text>
+    <text x="550" y="547" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="14" fill="#4e7262">最后一轮仅开放此工具</text>
+
+    <rect x="805" y="438" width="405" height="132" rx="22" fill="#fff4e4" stroke="#d0a363"/>
+    <text x="1007" y="478" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="22" font-weight="700" fill="#80551f">确定性校验器</text>
+    <text x="1007" y="510" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="16" fill="#5e523f">排名连续 · 表族唯一 · Tier / Role 合法</text>
+    <text x="1007" y="537" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="16" fill="#5e523f">变体存在 · 单数据库范围 · 物理表可解析</text>
+    <text x="1007" y="560" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="14" fill="#8d6b40">失败时把错误返回模型</text>
+  </g>
+
+  <line x1="300" y1="225" x2="390" y2="225" stroke="#59758e" stroke-width="4" marker-end="url(#arrow)"/>
+  <line x1="700" y1="225" x2="795" y2="225" stroke="#59758e" stroke-width="4" marker-end="url(#arrow)"/>
+  <path d="M805 330 C745 330, 745 286, 705 286" fill="none" stroke="#59758e" stroke-width="3" marker-end="url(#arrow)"/>
+  <line x1="550" y1="300" x2="550" y2="440" stroke="#59758e" stroke-width="4" marker-end="url(#arrow)"/>
+  <line x1="700" y1="504" x2="795" y2="504" stroke="#59758e" stroke-width="4" marker-end="url(#arrow)"/>
+
+  <path d="M1007 580 C1007 650, 550 650, 550 568" fill="none" stroke="#bb7840" stroke-width="3" stroke-dasharray="9 7" marker-end="url(#arrow)"/>
+  <text x="780" y="677" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="16" fill="#865c38">提交格式不合法：最多追加一次 submission-only 修复轮</text>
+  <rect x="70" y="624" width="300" height="70" rx="16" fill="#18344f"/>
+  <text x="220" y="652" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="16" font-weight="700" fill="#ffffff">成功终止条件</text>
+  <text x="220" y="678" text-anchor="middle" font-family="Microsoft YaHei, Arial, sans-serif" font-size="15" fill="#dce8f1">校验通过并生成 valid=true</text>
+</svg>

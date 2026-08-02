@@ -263,6 +263,40 @@ rollout incomplete. These checks prevent incomplete or unexecuted submissions;
 they do not resolve semantic misunderstandings of the question, which remains
 the Agent's responsibility.
 
+## 独立 Schema Router 评测
+
+`run_schema_router.py` 在主 Agent 之外运行，只读取本地 Schema、DDL、样例行
+和 external knowledge，不连接 Snowflake，也不执行 SQL。它用仓库公开的 120
+份官方 SQL 生成评测标签；官方 SQL 和标签不会进入 Router 的模型上下文。
+
+```powershell
+python run_schema_router.py --config configs/schema-router.yaml
+```
+
+通过 `conda run` 启动时可加 `--no-capture-output`，使 Rich 聚合进度即时显示。
+进度只展示已结束、进行中、成功、失败、续跑跳过、已运行时间和题/小时；详细
+模型及工具错误写入 `run.log`。
+
+配置入口仍然只接受 `--config`。每次运行当前全部可解析的官方 SQL；当前为
+120 题。每题运行次数由 `evaluation.rollouts` 控制，默认 1。正式模型调用前
+仍需明确授权。
+
+Router 输出位于同一实验目录：
+
+- `schema-router-labels.jsonl`：全部官方 SQL 表标签；
+- `schema-router-task-set.json`：全量任务 ID 及 catalog/label 哈希；
+- `routing/<instance_id>/rollout-<n>.json`：候选表族、物理表展开和审计轨迹；
+- `schema-router-summary.json` 与 `schema-router-report.md`：召回、压缩、稳定性
+  和性能汇总。
+
+Router 只拥有元数据工具：表族列表、候选搜索、表族描述、变体解析和最终提交。
+它没有 SQL 执行工具，也不会改变主 Agent 的 Prompt 或工具权限。
+最终提交中的 `instance_id` 由运行器绑定，模型只提交候选表族。最后一轮及唯一
+一次格式修复只暴露最终提交工具，以兼容不支持指定 `tool_choice` 的 reasoning
+接口。运行指纹包含 Router 协议版本、Prompt 内容、全量任务清单和 Catalog
+哈希，行为或评测数据变化不会续跑进旧版本目录。全量报告统一应用覆盖率与
+非法引用门槛，未达标时报告仍会落盘，命令返回状态码 2。
+
 ## Export submission SQL
 
 The submission converter is unchanged:

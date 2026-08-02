@@ -97,6 +97,29 @@ def test_progress_calculates_completion_rate(monkeypatch):
     assert "平均 " not in output.getvalue()
 
 
+def test_progress_reports_resumed_skips_without_inflating_rate(monkeypatch):
+    output = io.StringIO()
+    clock_values = iter([100.0, 160.0, 160.0, 160.0])
+    monkeypatch.setattr("agent.progress.time.monotonic", lambda: next(clock_values))
+
+    with TaskProgressReporter(
+        "Router",
+        3,
+        stream=output,
+        is_terminal=False,
+        initial_successful=2,
+        skipped=2,
+    ) as reporter:
+        reporter.task_started()
+        reporter.task_finished(success=True)
+
+    snapshot = reporter.snapshot
+    assert snapshot.completed == 3
+    assert snapshot.skipped == 2
+    assert snapshot.tasks_per_hour == 60
+    assert "跳过 2" in output.getvalue()
+
+
 def test_evaluation_progress_counts_zero_score_as_failure():
     output = io.StringIO()
 

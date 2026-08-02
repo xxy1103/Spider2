@@ -1,0 +1,38 @@
+experiment:
+  name: schema-router-all
+  results_root: methods/spider-agent-tc/results
+  resume: true
+
+secrets_file: methods/spider-agent-tc/configs/secrets.yaml
+
+paths:
+  input_file: spider2-snow/spider2-snow.jsonl
+  databases: spider2-snow/resource/databases
+  documents: spider2-snow/resource/documents
+  official_sql_dir: spider2-snow/evaluation_suite/gold/sql
+  router_prompt: methods/spider-agent-tc/prompts/schema_router.txt
+
+schema_router:
+  model:
+    name: deepseek-v4-flash
+    temperature: 0
+    top_p: 1
+    max_tokens: 12000
+    request_timeout_seconds: 180
+    retry:
+      max_attempts: 3
+      initial_delay_seconds: 1
+      backoff_multiplier: 2
+      max_delay_seconds: 10
+  max_rounds: 6
+  max_tool_calls: 24
+  num_threads: 4
+  sample_rows: 1
+  max_sample_chars: 4000
+
+evaluation:
+  rollouts: 1
+  thresholds:
+    physical_task_full_coverage: 0.97
+    physical_micro_recall: 0.99
+    invalid_references: 0

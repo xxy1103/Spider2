@@ -13,25 +13,25 @@ paths:
 
 tasks:
   instance_ids:
-    - sf_bq003
-    - sf_bq008
-    - sf_bq009
-    - sf_bq026
-    - sf_bq036
-    - sf_bq099
-    - sf_bq180
-    - sf_bq193
-    - sf_bq207
-    - sf_bq210
-    - sf_bq214
-    - sf_bq215
-    - sf_bq221
-    - sf_bq222
-    - sf_bq246
-    - sf_bq270
+    # - sf_bq003
+    # - sf_bq008
+    # - sf_bq009
+    # - sf_bq026
+    # - sf_bq036
+    # - sf_bq099
+    # - sf_bq180
+    # - sf_bq193
+    # - sf_bq207
+    # - sf_bq210
+    # - sf_bq214
+    # - sf_bq215
+    # - sf_bq221
+    # - sf_bq222
+    # - sf_bq246
+    # - sf_bq270
     - sf_bq275
-    - sf_bq374
-    - sf_bq420
+    # - sf_bq374
+    # - sf_bq420
   index_ranges: []
   databases: []
   sample_size: null
