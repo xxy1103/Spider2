@@ -38,6 +38,7 @@ from agent.schema_router_evaluator import (
     score_rollout,
     threshold_status,
 )
+from agent.schema_router_runtime import routing_path
 from agent.progress import TaskProgressReporter
 
 
@@ -92,12 +93,7 @@ def _configure_logging(config: SchemaRouterConfig) -> Path:
 def _routing_path(
     config: SchemaRouterConfig, instance_id: str, rollout_idx: int
 ) -> Path:
-    return (
-        config.experiment_dir
-        / "routing"
-        / instance_id
-        / f"rollout-{rollout_idx}.json"
-    )
+    return routing_path(config.experiment_dir, instance_id, rollout_idx)
 
 
 def _load_completed(path: Path) -> dict[str, Any] | None:

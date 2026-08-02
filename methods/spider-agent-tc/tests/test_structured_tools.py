@@ -118,13 +118,27 @@ def make_config(tmp_path, mode="live"):
     return config
 
 
-def context(database="DB1"):
+def context(database="DB1", allowed_tables=None):
+    allowed = [f"{database}.S.T{index:02d}" for index in range(100)]
+    allowed.extend(
+        [
+            f"{database}.S.T1",
+            f"{database}.S.T2",
+            f"{database}.OTHER.T3",
+            f"{database}.OTHER.T2",
+            f"{database}.S.T_20200101",
+            f"{database}.S.T_20200102",
+            f"{database}.S.T_20200103",
+        ]
+    )
     return {
         "instance_id": "task",
         "rollout_idx": 0,
         "allowed_database": database,
         "instruction": "question",
         "external_knowledge": None,
+        "schema_scope": "routed",
+        "allowed_physical_tables": allowed_tables or allowed,
     }
 
 
@@ -154,6 +168,25 @@ def test_catalog_indexes_only_selected_databases_and_enforces_scope(tmp_path):
         runtime.describe_table(table="DB2.S.T2", _context=context())
 
 
+def test_strict_route_hides_and_rejects_non_candidate_tables(tmp_path):
+    config = make_config(tmp_path)
+    write_table(config.paths["databases"], "DB1", "S", "T1")
+    write_table(config.paths["databases"], "DB1", "S", "T2")
+    build_catalog(config)
+    runtime = StructuredToolRuntime()
+    runtime.configure(config)
+    strict = context(allowed_tables=["DB1.S.T1"])
+
+    matches = content(runtime.search_schema(query="amount", _context=strict))
+    assert {row["full_table_name"] for row in matches["matches"]} == {
+        "DB1.S.T1"
+    }
+    with pytest.raises(ValueError, match="strict routed schema whitelist"):
+        runtime.describe_table(table="DB1.S.T2", _context=strict)
+    with pytest.raises(ValueError, match="strict routed schema whitelist"):
+        runtime._validate_sql("SELECT * FROM DB1.S.T2", strict)
+
+
 def test_initial_user_message_contains_indexed_schema_overview(tmp_path):
     config = make_config(tmp_path)
     write_table(config.paths["databases"], "DB1", "S", "T1")
@@ -167,6 +200,26 @@ def test_initial_user_message_contains_indexed_schema_overview(tmp_path):
         system_prompt_path=str(system_prompt),
         documents_path=str(config.paths["documents"]),
     )
+    (config.experiment_dir / "routing-index.json").write_text(
+        json.dumps(
+            {
+                "routes": {
+                    "task::0": {
+                        "allowed_physical_tables": ["DB1.S.T1"],
+                        "candidates": [
+                            {
+                                "tier": "required",
+                                "roles": ["fact"],
+                                "reason": "PRIVATE ROUTER SPECULATION",
+                                "resolved_physical_tables": ["DB1.S.T1"],
+                            }
+                        ],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
 
     messages = SpiderAgentPromptBuilder().build_initial_prompt(
         config.selected_items[0],
@@ -176,9 +229,11 @@ def test_initial_user_message_contains_indexed_schema_overview(tmp_path):
     user_content = messages[1]["content"]
     assert "Question: question" in user_content
     assert "The allowed database for this task is DB1." in user_content
-    assert "Indexed schema overview:" in user_content
-    assert "- OTHER (1 tables):\n  - T3" in user_content
-    assert "- S (2 tables):\n  - T1\n  - T2" in user_content
+    assert "Strict routed schema whitelist:" in user_content
+    assert "DB1.S.T1" in user_content
+    assert "DB1.S.T2" not in user_content
+    assert "DB1.OTHER.T3" not in user_content
+    assert "PRIVATE ROUTER SPECULATION" not in user_content
     assert "first:" not in user_content
     assert "last:" not in user_content
     assert "get_task_context" not in user_content
@@ -270,6 +325,12 @@ def test_sf_bq275_regression_builds_all_366_tables_without_ellipsis(tmp_path):
     build_catalog(config)
     runtime = StructuredToolRuntime()
     runtime.configure(config)
+    strict_context = context(
+        allowed_tables=[
+            f"DB1.S.T_{date(2020, 1, 1) + timedelta(days=index):%Y%m%d}"
+            for index in range(366)
+        ]
+    )
 
     table_set = content(
         runtime.resolve_table_set(
@@ -277,7 +338,7 @@ def test_sf_bq275_regression_builds_all_366_tables_without_ellipsis(tmp_path):
             prefix="T_",
             start_date="20200101",
             end_date="20201231",
-            _context=context(),
+            _context=strict_context,
         )
     )
     assert table_set["matched_tables"] == 366
@@ -294,7 +355,7 @@ def test_sf_bq275_regression_builds_all_366_tables_without_ellipsis(tmp_path):
             final_query_template=(
                 "WITH all_rows AS ({union_sql}) SELECT id FROM all_rows"
             ),
-            _context=context(),
+            _context=strict_context,
         )
     )
     assert built["referenced_tables"] == 366

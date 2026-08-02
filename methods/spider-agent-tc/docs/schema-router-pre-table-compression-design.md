@@ -2,7 +2,7 @@
 
 > 文档性质：当前实现设计说明、主 Agent 接入契约与评测方案  
 > 代码核对日期：2026-07-31  
-> 适用范围：`methods/spider-agent-tc/` 中独立 Schema Router、逻辑表族目录、候选表选择、官方 SQL 离线评测，以及未来接入主 Agent 的前置路由阶段
+> 适用范围：`methods/spider-agent-tc/` 中独立 Schema Router、逻辑表族目录、候选表选择、官方 SQL 离线评测，以及主 Agent 的前置硬隔离路由阶段
 
 ## 技术摘要
 
@@ -19,9 +19,10 @@ Router 的结果不是 SQL，也不是业务答案，而是一份经过严格校
 
 当前状态需要明确区分：
 
-- 逻辑表族构建、Router 子 Agent、独立运行器、结果持久化和官方 SQL 评测已经实现。
-- 当前入口是 `run_schema_router.py --config ...`，它在主 Agent 之外独立运行。
-- Router 输出尚未接入 `run.py` 的主 Agent 首轮上下文或工具权限，因此本文的“交给主 Agent”部分是已经定义的数据契约和建议接入点，不代表主流程已经启用。
+- `run_schema_router.py --config ...` 保留为独立全量评测入口。
+- `run.py --config ...` 已在每个主 Agent rollout 前运行 Router。
+- 主 Agent 只接收三层候选展开后的精确物理表并集；同一白名单同时约束 Schema 工具、SQL 执行与最终提交。
+- Router 无有效 selection 时该 rollout 直接失败，不提供完整数据库回退。
 
 ## 一、问题定义
 
@@ -461,9 +462,9 @@ Catalog 在同一运行内由多个任务只读共享；每个工具实例仍按
 4. 写出可读的 `schema-router-report.md`。
 5. 全量评分报告统一应用验收门槛。
 
-### 阶段 8：未来接入主 Agent
+### 阶段 8：硬隔离接入主 Agent
 
-建议在主 Agent 的 `receive_problem` / 首轮 Schema 上下文装配之前增加 Router 节点：
+主入口在首轮 Schema 上下文装配之前运行 Router：
 
 ```text
 任务选择
@@ -475,14 +476,12 @@ Catalog 在同一运行内由多个任务只读共享；每个工具实例仍按
   → terminate
 ```
 
-接入时建议采用“软白名单 + 显式回退”：
+接入采用精确物理表硬白名单：
 
-- `required` 和 `supporting` 默认进入主 Agent 首轮目录。
-- `possible` 只保留轻量摘要，需要时再展开。
-- 主 Agent 若发现候选不足，可显式请求回退到完整 Schema 搜索，并记录 Router miss 信号。
-- 不应在尚未达到足够全覆盖率前，把未选表做成不可突破的硬权限黑名单。
-
-这种接入方式能先获得上下文压缩收益，同时避免 Router 一次漏召回直接导致整题不可恢复。
+- `required`、`supporting` 和 `possible` 全部展开并去重，口径与报告中的“压缩后表数”一致。
+- 主 Agent 的 Schema 清单、搜索、描述、变体解析、SQL 执行和提交都只能使用该白名单。
+- Router 失败、空候选或非法 selection 时，当前 rollout 直接失败，不启动主 Agent。
+- Router 成功但漏表时不回退完整 Schema；该失败作为硬隔离端到端结果保留。
 
 ## 八、评测设计
 
@@ -644,7 +643,7 @@ results/<experiment>/<timestamp>/
 | 工具调用超预算 | 返回预算耗尽错误 | 要求立即提交当前最佳选择 |
 | 幻觉表族或越库引用 | 确定性校验拒绝并计数 | 不进入主 Agent 候选 |
 | 日期范围无匹配 | 校验拒绝 | 让模型修正范围或使用精确变体 |
-| Router 漏召回 | 独立评测发现；主流程尚未接入 | 上线初期使用软白名单并允许主 Agent 回退 |
+| Router 漏召回 | 独立评测与主 Agent 端到端评分发现 | 保持硬白名单并将该题记为失败，用回归样例修复 Router |
 | 多 rollout 结果不稳定 | 稳定性指标 | 优先修 Prompt / 工具证据，再考虑融合投票 |
 
 ## 十一、验证方式

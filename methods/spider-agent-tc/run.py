@@ -294,6 +294,7 @@ def build_agent_args(config: LoadedConfig, port: int) -> SimpleNamespace:
         max_rounds=raw["agent"]["max_rounds"],
         num_threads=raw["agent"]["num_threads"],
         rollout_number=raw["agent"]["rollout_number"],
+        routing_index_path=str(config.experiment_dir / "routing-index.json"),
         prompt_strategy="spider-agent",
         model_base_url=config.secrets["model_api"]["base_url"],
         model_api_key=config.secrets["model_api"]["api_key"],
@@ -319,6 +320,40 @@ def write_summary(config: LoadedConfig, summary: dict[str, Any]) -> None:
     summary["snowflake_mode"] = config.raw["tools"]["sql"]["mode"]
     summary["mock_run"] = config.raw["tools"]["sql"]["mode"] == "mock"
     summary["finished_at"] = datetime.now(timezone.utc).isoformat()
+    routing_path = config.experiment_dir / "routing-index.json"
+    if routing_path.is_file():
+        routing = json.loads(routing_path.read_text(encoding="utf-8"))
+        routes = list(routing.get("routes", {}).values())
+        summary["schema_router"] = {
+            "mode": routing.get("mode"),
+            "failure_policy": routing.get("failure_policy"),
+            "expected_routes": routing.get("expected_routes", 0),
+            "valid_routes": routing.get("valid_routes", 0),
+            "failed_routes": routing.get("failed_routes", 0),
+            "failed_route_keys": routing.get("failed_route_keys", []),
+            "performance": routing.get("performance", {}),
+            "average_tables_before": (
+                sum(route["available_physical_tables"] for route in routes)
+                / len(routes)
+                if routes
+                else 0
+            ),
+            "average_tables_after": (
+                sum(len(route["allowed_physical_tables"]) for route in routes)
+                / len(routes)
+                if routes
+                else 0
+            ),
+            "routes": [
+                {
+                    "instance_id": route["instance_id"],
+                    "rollout_idx": route["rollout_idx"],
+                    "tables_before": route["available_physical_tables"],
+                    "tables_after": len(route["allowed_physical_tables"]),
+                }
+                for route in routes
+            ],
+        }
     (config.experiment_dir / "run-summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -334,9 +369,16 @@ def execute(config: LoadedConfig) -> int:
     run_preflight(config, port)
     prepare_experiment(config, port)
     from servers.structured_tools import build_catalog
+    from agent.schema_router import SchemaRouterCatalog
+    from agent.schema_router_runtime import run_integrated_schema_router
 
-    build_catalog(config)
     log_path = configure_file_logging(config)
+    build_catalog(config)
+    router_catalog = SchemaRouterCatalog(
+        config.paths["databases"],
+        {item["db_id"] for item in config.selected_items},
+    )
+    run_integrated_schema_router(config, router_catalog)
 
     process = None
     try:

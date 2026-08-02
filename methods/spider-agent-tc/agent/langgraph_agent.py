@@ -34,6 +34,7 @@ from .file_manager import FileManager
 from .message_processor import MessageProcessor
 from .progress import TaskProgressReporter
 from .prompt_builders import get_prompt_builder
+from .schema_router_runtime import get_route
 from servers.structured_tools import get_openai_tools
 
 logger = logging.getLogger(__name__)
@@ -359,6 +360,9 @@ class LangGraphAgent:
             }
 
         tool_calls_for_execution: list[dict[str, Any]] = []
+        route = state["item"].get("_schema_route")
+        if not isinstance(route, dict):
+            raise RuntimeError("Strict Schema Router context is missing")
         for tc in last_message.tool_calls:
             arguments = dict(tc["args"])
             arguments["_context"] = {
@@ -367,6 +371,8 @@ class LangGraphAgent:
                 "allowed_database": state["item"]["db_id"],
                 "instruction": state["item"]["instruction"],
                 "external_knowledge": state["item"].get("external_knowledge"),
+                "schema_scope": route["schema_scope"],
+                "allowed_physical_tables": route["allowed_physical_tables"],
             }
             tool_calls_for_execution.append(
                 {"name": tc["name"], "arguments": arguments}
@@ -396,6 +402,13 @@ class LangGraphAgent:
                     pass
             if content_payload.get("status") == "error":
                 failed = True
+            whitelist_rejected = (
+                "strict routed schema whitelist" in result_content.lower()
+                if isinstance(result_content, str)
+                else False
+            )
+            if whitelist_rejected:
+                performance["schema_whitelist_rejections"] += 1
             terminate_rejected = False
             if tc["name"] == "terminate":
                 try:
@@ -449,6 +462,7 @@ class LangGraphAgent:
             "max_sql_chars": 0,
             "terminate_calls": 0,
             "terminate_rejections": 0,
+            "schema_whitelist_rejections": 0,
             "tools": {},
         }
 
@@ -597,7 +611,10 @@ class LangGraphAgent:
             return None
 
         try:
-            initial_messages = self.prompt_builder.build_initial_prompt(item, self.args)
+            route = get_route(self.args.output_folder, instance_id, rollout_idx)
+            initial_messages = self.prompt_builder.build_initial_prompt(
+                item, self.args, rollout_idx
+            )
             lc_messages: list[BaseMessage] = [
                 SystemMessage(content=m["content"])
                 if m["role"] == "system"
@@ -607,7 +624,7 @@ class LangGraphAgent:
 
             initial_state: AgentState = {
                 "messages": lc_messages,
-                "item": item,
+                "item": {**item, "_schema_route": route},
                 "conversation_history": list(initial_messages),
                 "round_num": 0,
                 "rollout_idx": rollout_idx,
@@ -708,8 +725,30 @@ class LangGraphAgent:
         tasks_to_process = []
         for item in items:
             instance_id = item["instance_id"]
-            current_valid_rollouts = self.processed_instances[instance_id]
-            for rollout_idx in range(current_valid_rollouts, self.args.rollout_number):
+            existing = self.file_manager.load_instance_results(instance_id)
+            terminated_rollouts = {
+                result.get("rollout_idx")
+                for result in existing
+                if isinstance(result, dict) and result.get("terminated") is True
+            }
+            for rollout_idx in range(self.args.rollout_number):
+                if rollout_idx in terminated_rollouts:
+                    continue
+                try:
+                    get_route(self.args.output_folder, instance_id, rollout_idx)
+                except RuntimeError as exc:
+                    self.file_manager.upsert_rollout_result(
+                        {
+                            "instance_id": instance_id,
+                            "rollout_idx": rollout_idx,
+                            "terminated": False,
+                            "in_progress": False,
+                            "router_failed": True,
+                            "error": str(exc),
+                            "performance": self._new_performance(),
+                        }
+                    )
+                    continue
                 tasks_to_process.append((item, rollout_idx))
 
         if not tasks_to_process:
@@ -816,6 +855,7 @@ class LangGraphAgent:
             "sql_duration_seconds",
             "terminate_calls",
             "terminate_rejections",
+            "schema_whitelist_rejections",
         ]
         summary: dict[str, Any] = {
             "profiled_tasks": len(profiles),

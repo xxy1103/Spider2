@@ -282,6 +282,7 @@ def score_rollout(
                     invalid_references += 1
     return {
         "instance_id": label["instance_id"],
+        "database_id": database_id,
         "rollout_idx": (
             result.get("rollout_idx") if isinstance(result, dict) else None
         ),
@@ -294,6 +295,8 @@ def score_rollout(
         "physical_gold": len(gold_physical),
         "family_true_positives": len(selected_families & gold_families),
         "family_gold": len(gold_families),
+        "available_physical": available_physical,
+        "available_families": available_families,
         "selected_physical": len(selected_physical),
         "selected_families": len(selected_families),
         "physical_compression": 1
@@ -558,4 +561,35 @@ def render_report(
     lines.append(f"- 结论：{'通过' if threshold['passed'] else '未通过'}")
     for name, passed in threshold["checks"].items():
         lines.append(f"- `{name}`：{'通过' if passed else '未通过'}")
+    lines.extend(
+        [
+            "",
+            "## 每题压缩明细（物理表）",
+            "",
+            (
+                "压缩前表数是该题 allowed database 在本地 Schema Catalog 中的"
+                "物理表总数；压缩后表数是 Router 最终候选展开并去重后的物理表数。"
+            ),
+            "",
+            (
+                "| 题目 | Rollout | 数据库 | 压缩前 | 压缩后 | 减少 | "
+                "压缩率 | Gold 命中 | Recall | 全覆盖 |"
+            ),
+            "|---|---:|---|---:|---:|---:|---:|---:|---:|:---:|",
+        ]
+    )
+    for score in summary["tasks"]:
+        available = score["available_physical"]
+        selected = score["selected_physical"]
+        rollout_idx = score["rollout_idx"]
+        lines.append(
+            f"| {score['instance_id']} | "
+            f"{rollout_idx if rollout_idx is not None else '-'} | "
+            f"{score['database_id']} | "
+            f"{available} | {selected} | {available - selected} | "
+            f"{percentage(score['physical_compression'])} | "
+            f"{score['physical_true_positives']}/{score['physical_gold']} | "
+            f"{percentage(score['physical_recall'])} | "
+            f"{'是' if score['physical_full_coverage'] else '否'} |"
+        )
     return "\n".join(lines) + "\n"

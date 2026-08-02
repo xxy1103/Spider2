@@ -1,4 +1,4 @@
 cd /mnt/c/Users/ulna/Desktop/Spider2/methods/spider-agent-tc
 conda activate spider2-tc
-python run.py --config configs/smoke.yaml
+python methods/spider-agent-tc/run.py --config methods/spider-agent-tc/configs/smoke.yaml
 python methods/spider-agent-tc/run_schema_router.py --config methods/spider-agent-tc/configs/schema-router.yaml

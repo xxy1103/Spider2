@@ -288,10 +288,21 @@ class StructuredToolRuntime:
             "allowed_database",
             "instruction",
             "external_knowledge",
+            "schema_scope",
+            "allowed_physical_tables",
         }
         if not required.issubset(raw):
             raise ValueError("Incomplete injected task context")
         return raw
+
+    @staticmethod
+    def _allowed_tables(context: dict[str, Any]) -> set[str]:
+        if context.get("schema_scope") != "routed":
+            raise ValueError("Only strict routed schema scope is supported")
+        values = context.get("allowed_physical_tables")
+        if not isinstance(values, list) or not values:
+            raise ValueError("Strict routed schema whitelist is empty")
+        return {str(value).upper() for value in values}
 
     def _task_dir(self, context: dict[str, Any]) -> Path:
         if self.config is None:
@@ -374,6 +385,9 @@ class StructuredToolRuntime:
             placeholders = ",".join("?" for _ in schemas)
             schema_clause = f" AND UPPER(t.schema_name) IN ({placeholders})"
             parameters.extend(schema.upper() for schema in schemas)
+        allowed_tables = sorted(self._allowed_tables(context))
+        whitelist = ",".join("?" for _ in allowed_tables)
+        parameters.extend(allowed_tables)
         parameters.extend([actual_limit + 1, offset])
         statement = f"""
             SELECT t.full_table_name, t.schema_name, t.table_name,
@@ -387,6 +401,7 @@ class StructuredToolRuntime:
             WHERE t.database_id = ?
               AND ({' OR '.join(clauses)})
               {schema_clause}
+              AND UPPER(t.full_table_name) IN ({whitelist})
             ORDER BY t.schema_name, t.table_name, c.column_name
             LIMIT ? OFFSET ?
         """
@@ -415,6 +430,8 @@ class StructuredToolRuntime:
             raise ValueError("table must use database.schema.table")
         if parts[0].upper() != str(context["allowed_database"]).upper():
             raise ValueError("Table is outside the current task database scope")
+        if table.upper() not in self._allowed_tables(context):
+            raise ValueError("Table is outside the strict routed schema whitelist")
         offset = _cursor_offset(cursor)
         settings = self._settings("catalog")
         page_size = settings["page_size"]
@@ -517,6 +534,10 @@ class StructuredToolRuntime:
                 """,
                 (context["allowed_database"], schema, len(prefix), prefix),
             ).fetchall()
+        allowed_tables = self._allowed_tables(context)
+        rows = [
+            row for row in rows if row["full_table_name"].upper() in allowed_tables
+        ]
         selected = []
         for row in rows:
             match = DATE_SUFFIX_RE.search(row["table_name"])
@@ -648,6 +669,7 @@ class StructuredToolRuntime:
         }
         tables = []
         allowed = str(context["allowed_database"]).upper()
+        allowed_tables = self._allowed_tables(context)
         for table in expression.find_all(exp.Table):
             name = table.name
             database = table.catalog
@@ -666,7 +688,13 @@ class StructuredToolRuntime:
                 )
             if schema.upper() == "INFORMATION_SCHEMA":
                 raise ValueError("INFORMATION_SCHEMA queries are not allowed")
-            tables.append(f"{database}.{schema}.{name}")
+            full_name = f"{database}.{schema}.{name}"
+            if full_name.upper() not in allowed_tables:
+                raise ValueError(
+                    "Table is outside the strict routed schema whitelist: "
+                    f"{table.sql()}"
+                )
+            tables.append(full_name)
         return {
             "sql_sha256": _sha256(sql),
             "tables": sorted(set(tables)),

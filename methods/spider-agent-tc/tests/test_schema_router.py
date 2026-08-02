@@ -19,6 +19,7 @@ from agent.schema_router_evaluator import (
     score_rollout,
     threshold_status,
 )
+from agent.schema_router_runtime import get_route, route_key
 
 
 def _write_table(
@@ -44,6 +45,28 @@ def _write_table(
         encoding="utf-8",
     )
     return path
+
+
+def test_integrated_routing_index_requires_matching_rollout(tmp_path):
+    (tmp_path / "routing-index.json").write_text(
+        json.dumps(
+            {
+                "routes": {
+                    route_key("sf_bq010", 1): {
+                        "schema_scope": "routed",
+                        "allowed_physical_tables": ["DB.S.T"],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert get_route(tmp_path, "sf_bq010", 1)["allowed_physical_tables"] == [
+        "DB.S.T"
+    ]
+    with pytest.raises(RuntimeError, match="No valid Schema Router selection"):
+        get_route(tmp_path, "sf_bq010", 0)
 
 
 @pytest.fixture
@@ -495,6 +518,9 @@ def test_scores_keep_rollouts_separate(catalog):
     )
     assert summary["physical_task_full_coverage"] == 0.5
     assert summary["stability"]["instances_with_all_rollouts_physical_full"] == 0
+    assert scores[0]["database_id"] == "GA360"
+    assert scores[0]["available_physical"] == 4
+    assert scores[0]["selected_physical"] == 1
 
 
 def test_full_evaluation_threshold_and_report():
@@ -534,6 +560,20 @@ def test_full_evaluation_threshold_and_report():
             "total_tokens": 1000,
             "duration_seconds": 10.0,
         },
+        "tasks": [
+            {
+                "instance_id": "sf_bq010",
+                "database_id": "GA360",
+                "rollout_idx": 0,
+                "available_physical": 31,
+                "selected_physical": 2,
+                "physical_compression": 29 / 31,
+                "physical_true_positives": 1,
+                "physical_gold": 1,
+                "physical_recall": 1.0,
+                "physical_full_coverage": True,
+            }
+        ],
     }
     threshold = threshold_status(
         summary=summary,
@@ -549,6 +589,8 @@ def test_full_evaluation_threshold_and_report():
     assert "全量评测报告" in report
     assert "预期 Rollout：120" in report
     assert "失败 Rollout：1" in report
+    assert "每题压缩明细（物理表）" in report
+    assert "| sf_bq010 | 0 | GA360 | 31 | 2 | 29 |" in report
     assert "development" not in report
     assert "holdout" not in report
     assert "留出集" not in report

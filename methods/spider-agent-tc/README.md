@@ -263,6 +263,21 @@ rollout incomplete. These checks prevent incomplete or unexecuted submissions;
 they do not resolve semantic misunderstandings of the question, which remains
 the Agent's responsibility.
 
+## 主 Agent 的 Schema Router 硬隔离
+
+`run.py` 会先为每个“题目 × rollout”运行 Schema Router，再启动主 Agent。
+Router 可读取完整本地 Schema；主 Agent 的初始 Schema 清单只包含 Router
+提交的 `required`、`supporting`、`possible` 候选展开后的物理表并集。
+
+同一物理表白名单同时约束 `search_schema`、`describe_table`、
+`resolve_table_set`、SQL 构建、执行和 `terminate`。Router 失败、空提交或非法
+selection 的 rollout 直接失败，不回退完整数据库。题目和 external knowledge
+保持原文，但其中出现的白名单外表名也不能通过工具或 SQL 访问。
+
+主运行目录中的 `routing-index.json` 保存逐 rollout 白名单和压缩前后表数；
+`routing/<instance_id>/rollout-<n>.json` 保存 Router 审计轨迹。配置仍通过主
+YAML 的 `schema_router` 段统一管理，入口仍然只接受 `--config`。
+
 ## 独立 Schema Router 评测
 
 `run_schema_router.py` 在主 Agent 之外运行，只读取本地 Schema、DDL、样例行
@@ -290,7 +305,8 @@ Router 输出位于同一实验目录：
   和性能汇总。
 
 Router 只拥有元数据工具：表族列表、候选搜索、表族描述、变体解析和最终提交。
-它没有 SQL 执行工具，也不会改变主 Agent 的 Prompt 或工具权限。
+它没有 SQL 执行工具。独立入口只生成专项评测；主入口会消费相同 selection
+协议并对主 Agent 实施硬白名单。
 最终提交中的 `instance_id` 由运行器绑定，模型只提交候选表族。最后一轮及唯一
 一次格式修复只暴露最终提交工具，以兼容不支持指定 `tool_choice` 的 reasoning
 接口。运行指纹包含 Router 协议版本、Prompt 内容、全量任务清单和 Catalog

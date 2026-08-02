@@ -12,6 +12,22 @@ from agent.file_manager import FileManager
 from agent.langgraph_agent import LangGraphAgent
 
 
+def write_route(tmp_path):
+    (tmp_path / "routing-index.json").write_text(
+        json.dumps(
+            {
+                "routes": {
+                    "task::0": {
+                        "schema_scope": "routed",
+                        "allowed_physical_tables": ["database.schema.table"],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_upsert_rollout_result_replaces_progress_record(tmp_path):
     manager = FileManager(SimpleNamespace(output_folder=str(tmp_path)))
     manager.upsert_rollout_result(
@@ -43,6 +59,7 @@ def test_upsert_rollout_result_replaces_progress_record(tmp_path):
 
 
 def test_process_single_item_refreshes_file_after_each_graph_step(tmp_path):
+    write_route(tmp_path)
     item = {"instance_id": "task", "db_id": "database"}
     args = SimpleNamespace(
         output_folder=str(tmp_path),
@@ -55,7 +72,7 @@ def test_process_single_item_refreshes_file_after_each_graph_step(tmp_path):
     agent.processed_instances = {"task": 0}
     agent.file_manager = FileManager(args)
     agent.prompt_builder = SimpleNamespace(
-        build_initial_prompt=lambda current_item, current_args: [
+        build_initial_prompt=lambda current_item, current_args, rollout_idx: [
             {"role": "user", "content": "question"}
         ]
     )
@@ -132,6 +149,7 @@ def test_process_single_item_refreshes_file_after_each_graph_step(tmp_path):
 
 
 def test_stream_failure_keeps_last_persisted_conversation(tmp_path):
+    write_route(tmp_path)
     item = {"instance_id": "task", "db_id": "database"}
     args = SimpleNamespace(
         output_folder=str(tmp_path),
@@ -144,7 +162,7 @@ def test_stream_failure_keeps_last_persisted_conversation(tmp_path):
     agent.processed_instances = {"task": 0}
     agent.file_manager = FileManager(args)
     agent.prompt_builder = SimpleNamespace(
-        build_initial_prompt=lambda current_item, current_args: [
+        build_initial_prompt=lambda current_item, current_args, rollout_idx: [
             {"role": "user", "content": "question"}
         ]
     )

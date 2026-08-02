@@ -12,27 +12,9 @@ paths:
   system_prompt: methods/spider-agent-tc/prompts/spider_agent.txt
 
 tasks:
-  instance_ids:
-    # - sf_bq003
-    # - sf_bq008
-    # - sf_bq009
-    # - sf_bq026
-    # - sf_bq036
-    # - sf_bq099
-    # - sf_bq180
-    # - sf_bq193
-    # - sf_bq207
-    # - sf_bq210
-    # - sf_bq214
-    # - sf_bq215
-    # - sf_bq221
-    # - sf_bq222
-    # - sf_bq246
-    # - sf_bq270
-    - sf_bq275
-    # - sf_bq374
-    # - sf_bq420
-  index_ranges: []
+  instance_ids: []
+  index_ranges:
+    - "0-49"
   databases: []
   sample_size: null
   seed: 42
@@ -54,6 +36,33 @@ agent:
   max_rounds: 60
   num_threads: 4
   rollout_number: 1
+
+schema_router:
+  enabled: true
+  prompt: methods/spider-agent-tc/prompts/schema_router.txt
+  model:
+    name: deepseek-v4-flash
+    temperature: 0
+    top_p: 1
+    max_tokens: 12000
+    request_timeout_seconds: 180
+    retry:
+      max_attempts: 3
+      initial_delay_seconds: 1
+      backoff_multiplier: 2
+      max_delay_seconds: 10
+  max_rounds: 10
+  max_tool_calls: 24
+  num_threads: 4
+  sample_rows: 1
+  max_sample_chars: 4000
+  integration:
+    mode: strict
+    include_tiers:
+      - required
+      - supporting
+      - possible
+    failure_policy: fail_task
 
 server:
   host: 127.0.0.1

@@ -51,7 +51,7 @@ def extract_sql_answers(exp_dir: Path) -> dict[str, Any]:
     
     json_files = list(exp_dir.glob("*.json"))
     # Exclude metadata files
-    json_files = [f for f in json_files if f.stem not in {"run-manifest", "run-summary", "selected-tasks", "failed-tasks", "effective-config"}]
+    json_files = [f for f in json_files if f.stem not in {"run-manifest", "run-summary", "selected-tasks", "failed-tasks", "effective-config", "routing-index"}]
     
     processed_count = 0
     skipped_count = 0
@@ -222,7 +222,7 @@ def collect_conversation_stats(exp_dir: Path) -> dict[str, dict[str, Any]]:
     stats = {}
     
     json_files = list(exp_dir.glob("*.json"))
-    json_files = [f for f in json_files if f.stem not in {"run-manifest", "run-summary", "selected-tasks", "failed-tasks", "effective-config"}]
+    json_files = [f for f in json_files if f.stem not in {"run-manifest", "run-summary", "selected-tasks", "failed-tasks", "effective-config", "routing-index"}]
     
     for json_file in json_files:
         instance_id = json_file.stem
@@ -335,6 +335,46 @@ def generate_report(
         f"| 全数据集得分率 | {real_score*100:.2f}% ({correct_count}/547) |",
         "",
     ]
+    router = summary.get("schema_router", {})
+    if router:
+        lines.extend(
+            [
+                "## Schema Router 硬隔离",
+                "",
+                "| 指标 | 数值 |",
+                "|------|------|",
+                f"| 模式 | {router.get('mode', '-')} |",
+                f"| 有效路由 | {router.get('valid_routes', 0)} / {router.get('expected_routes', 0)} |",
+                f"| Router 失败 | {router.get('failed_routes', 0)} |",
+                f"| 平均压缩前物理表 | {router.get('average_tables_before', 0):.2f} |",
+                f"| 平均压缩后物理表 | {router.get('average_tables_after', 0):.2f} |",
+                f"| 白名单越界尝试 | {performance.get('schema_whitelist_rejections', 0)} |",
+                f"| Router Token | {int(router.get('performance', {}).get('total_tokens', 0))} |",
+                "",
+            ]
+        )
+        route_rows = sorted(
+            router.get("routes", []),
+            key=lambda value: (value["instance_id"], value["rollout_idx"]),
+        )
+        if route_rows:
+            lines.extend(
+                [
+                    "### 每题路由压缩",
+                    "",
+                    "| Instance ID | Rollout | 压缩前 | 压缩后 | 压缩率 |",
+                    "|-------------|--------:|-------:|-------:|-------:|",
+                ]
+            )
+            for route in route_rows:
+                before = route["tables_before"]
+                after = route["tables_after"]
+                compression = 1 - after / before if before else 0
+                lines.append(
+                    f"| {route['instance_id']} | {route['rollout_idx']} | "
+                    f"{before} | {after} | {compression * 100:.2f}% |"
+                )
+            lines.append("")
     
     # Task score details
     if eval_results:

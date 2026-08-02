@@ -126,6 +126,15 @@ def test_smoke_config_schema_is_valid():
     _validate_main(raw)
 
 
+def test_schema_router_requires_strict_fail_task_policy():
+    raw = load_smoke()
+    raw["model"]["name"] = "test-model"
+    raw["schema_router"]["integration"]["failure_policy"] = "full_database"
+
+    with pytest.raises(ConfigError, match="failure_policy must be 'fail_task'"):
+        _validate_main(raw)
+
+
 def test_smoke_config_loads_real_repository_paths_and_task(monkeypatch):
     original_read_yaml = config_module._read_yaml
 

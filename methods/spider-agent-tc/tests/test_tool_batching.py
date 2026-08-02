@@ -181,6 +181,10 @@ def test_agent_maps_ordered_results_to_every_tool_call_id(tmp_path):
             "instance_id": "task",
             "db_id": "database",
             "instruction": "question",
+            "_schema_route": {
+                "schema_scope": "routed",
+                "allowed_physical_tables": ["database.schema.table"],
+            },
         },
         "conversation_history": [],
         "round_num": 1,
@@ -223,6 +227,10 @@ def test_agent_only_terminates_when_validator_accepts():
             "instance_id": "task",
             "db_id": "database",
             "instruction": "question",
+            "_schema_route": {
+                "schema_scope": "routed",
+                "allowed_physical_tables": ["database.schema.table"],
+            },
         },
         "conversation_history": [],
         "round_num": 1,
@@ -265,6 +273,10 @@ def test_agent_collects_sql_and_termination_performance():
             "instance_id": "task",
             "db_id": "database",
             "instruction": "question",
+            "_schema_route": {
+                "schema_scope": "routed",
+                "allowed_physical_tables": ["database.schema.table"],
+            },
         },
         "conversation_history": [],
         "round_num": 1,

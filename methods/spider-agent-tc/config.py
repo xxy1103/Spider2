@@ -15,6 +15,8 @@ from typing import Any
 
 import yaml
 
+from agent.schema_router_config import SCHEMA_ROUTER_PROTOCOL_VERSION
+
 
 class ConfigError(ValueError):
     """Raised when a run configuration is invalid."""
@@ -78,6 +80,26 @@ _SCHEMA = {
     "tools.sql.mock": {"response_csv"},
     "preflight": {"check_model", "check_snowflake"},
     "auto_evaluate": {"enabled", "timeout", "max_workers"},
+    "schema_router": {
+        "enabled",
+        "prompt",
+        "model",
+        "max_rounds",
+        "max_tool_calls",
+        "num_threads",
+        "sample_rows",
+        "max_sample_chars",
+        "integration",
+    },
+    "schema_router.model": {
+        "name",
+        "temperature",
+        "top_p",
+        "max_tokens",
+        "request_timeout_seconds",
+        "retry",
+    },
+    "schema_router.integration": {"mode", "include_tiers", "failure_policy"},
 }
 
 _TOP_LEVEL = {
@@ -91,6 +113,7 @@ _TOP_LEVEL = {
     "tools",
     "preflight",
     "auto_evaluate",
+    "schema_router",
 }
 
 
@@ -169,7 +192,7 @@ def _validate_main(raw: dict[str, Any]) -> None:
     required_sections = _TOP_LEVEL - {"auto_evaluate"}
     _required(raw, required_sections, "config")
 
-    for section in ("experiment", "paths", "tasks", "model", "agent", "server", "tools", "preflight"):
+    for section in ("experiment", "paths", "tasks", "model", "agent", "server", "tools", "preflight", "schema_router"):
         mapping = _mapping(raw, section, "config")
         _reject_unknown(mapping, _SCHEMA[section], section)
         _required(mapping, _SCHEMA[section], section)
@@ -182,6 +205,34 @@ def _validate_main(raw: dict[str, Any]) -> None:
     retry = _mapping(raw["model"], "retry", "model")
     _reject_unknown(retry, _SCHEMA["model.retry"], "model.retry")
     _required(retry, _SCHEMA["model.retry"], "model.retry")
+    router = raw["schema_router"]
+    if router["enabled"] is not True:
+        raise ConfigError("schema_router.enabled must be true")
+    router["prompt"] = _string(router["prompt"], "schema_router.prompt")
+    router_model = _mapping(router, "model", "schema_router")
+    _reject_unknown(router_model, _SCHEMA["model"], "schema_router.model")
+    _required(router_model, _SCHEMA["model"], "schema_router.model")
+    router_retry = _mapping(router_model, "retry", "schema_router.model")
+    _reject_unknown(router_retry, _SCHEMA["model.retry"], "schema_router.model.retry")
+    _required(router_retry, _SCHEMA["model.retry"], "schema_router.model.retry")
+    integration = _mapping(router, "integration", "schema_router")
+    _reject_unknown(
+        integration, _SCHEMA["schema_router.integration"], "schema_router.integration"
+    )
+    _required(
+        integration, _SCHEMA["schema_router.integration"], "schema_router.integration"
+    )
+    if integration["mode"] != "strict":
+        raise ConfigError("schema_router.integration.mode must be 'strict'")
+    if integration["failure_policy"] != "fail_task":
+        raise ConfigError(
+            "schema_router.integration.failure_policy must be 'fail_task'"
+        )
+    if integration["include_tiers"] != ["required", "supporting", "possible"]:
+        raise ConfigError(
+            "schema_router.integration.include_tiers must be "
+            "[required, supporting, possible]"
+        )
     for tool in ("catalog", "submission"):
         settings = _mapping(raw["tools"], tool, "tools")
         _reject_unknown(settings, _SCHEMA[f"tools.{tool}"], f"tools.{tool}")
@@ -256,6 +307,25 @@ def _validate_main(raw: dict[str, Any]) -> None:
     _positive_number(retry["initial_delay_seconds"], "model.retry.initial_delay_seconds", allow_zero=True)
     _positive_number(retry["backoff_multiplier"], "model.retry.backoff_multiplier")
     _positive_number(retry["max_delay_seconds"], "model.retry.max_delay_seconds", allow_zero=True)
+
+    for location, value, value_retry in (
+        ("schema_router.model", router_model, router_retry),
+    ):
+        value["name"] = _string(value["name"], f"{location}.name")
+        _positive_number(value["temperature"], f"{location}.temperature", allow_zero=True)
+        router_top_p = _positive_number(value["top_p"], f"{location}.top_p")
+        if router_top_p > 1:
+            raise ConfigError(f"{location}.top_p must be at most 1")
+        _positive_int(value["max_tokens"], f"{location}.max_tokens")
+        _positive_number(value["request_timeout_seconds"], f"{location}.request_timeout_seconds")
+        _positive_int(value_retry["max_attempts"], f"{location}.retry.max_attempts")
+        _positive_number(value_retry["initial_delay_seconds"], f"{location}.retry.initial_delay_seconds", allow_zero=True)
+        _positive_number(value_retry["backoff_multiplier"], f"{location}.retry.backoff_multiplier")
+        _positive_number(value_retry["max_delay_seconds"], f"{location}.retry.max_delay_seconds", allow_zero=True)
+    for key in ("max_rounds", "max_tool_calls", "num_threads", "sample_rows", "max_sample_chars"):
+        _positive_int(router[key], f"schema_router.{key}")
+    if router["max_rounds"] < 2:
+        raise ConfigError("schema_router.max_rounds must be at least 2")
 
     for key in ("max_rounds", "num_threads", "rollout_number"):
         _positive_int(raw["agent"][key], f"agent.{key}")
@@ -481,6 +551,12 @@ def load_config(config_path: str | Path) -> LoadedConfig:
             raise ConfigError(f"paths.{key} is not a file: {value}")
         if not expected_file and not value.is_dir():
             raise ConfigError(f"paths.{key} is not a directory: {value}")
+    router_prompt = _resolve_repo_path(
+        repo_root, raw["schema_router"]["prompt"], "schema_router.prompt"
+    )
+    if not router_prompt.is_file():
+        raise ConfigError(f"schema_router.prompt is not a file: {router_prompt}")
+    paths["router_prompt"] = router_prompt
 
     secrets_path = _resolve_repo_path(repo_root, raw["secrets_file"], "secrets_file")
     secrets = _read_yaml(secrets_path, "Secrets file")
@@ -515,6 +591,11 @@ def load_config(config_path: str | Path) -> LoadedConfig:
             ),
         },
         "python": f"{sys.version_info.major}.{sys.version_info.minor}",
+        "prompt_hashes": {
+            "system": hashlib.sha256(paths["system_prompt"].read_bytes()).hexdigest(),
+            "schema_router": hashlib.sha256(router_prompt.read_bytes()).hexdigest(),
+        },
+        "schema_router_protocol_version": SCHEMA_ROUTER_PROTOCOL_VERSION,
     }
     fingerprint = hashlib.sha256(
         json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")

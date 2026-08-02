@@ -103,6 +103,18 @@ class FileManager:
             
         all_results = []
         instance_files = glob.glob(os.path.join(self.args.output_folder, "*.json"))
+        infrastructure_files = {
+            "run-manifest.json",
+            "run-summary.json",
+            "selected-tasks.json",
+            "failed-tasks.json",
+            "routing-index.json",
+        }
+        instance_files = [
+            path
+            for path in instance_files
+            if os.path.basename(path) not in infrastructure_files
+        ]
         
         for file_path in instance_files:
             try:
