@@ -32,6 +32,7 @@ from openai import OpenAI
 
 from .file_manager import FileManager
 from .message_processor import MessageProcessor
+from .model_request import deepseek_thinking_enabled, extract_reasoning_content
 from .progress import TaskProgressReporter
 from .prompt_builders import get_prompt_builder
 from .schema_router_runtime import get_route
@@ -101,6 +102,7 @@ class LangGraphAgent:
                     top_p=self.args.top_p,
                     max_tokens=self.args.max_new_tokens,
                     n=1,
+                    **getattr(self.args, "model_request_kwargs", {}),
                 )
                 return response
             except Exception as e:  # noqa: BLE001
@@ -130,8 +132,7 @@ class LangGraphAgent:
     # ------------------------------------------------------------------
     # Message format conversion
     # ------------------------------------------------------------------
-    @staticmethod
-    def _to_openai_messages(messages: Sequence[BaseMessage]) -> list[dict[str, Any]]:
+    def _to_openai_messages(self, messages: Sequence[BaseMessage]) -> list[dict[str, Any]]:
         """Convert LangChain messages to OpenAI wire format."""
         openai_messages: list[dict[str, Any]] = []
         for msg in messages:
@@ -153,6 +154,10 @@ class LangGraphAgent:
                         }
                         for tc in msg.tool_calls
                     ]
+                if self._deepseek_thinking_enabled():
+                    reasoning_content = msg.additional_kwargs.get("reasoning_content")
+                    if isinstance(reasoning_content, str) and reasoning_content:
+                        wire["reasoning_content"] = reasoning_content
                 openai_messages.append(wire)
             elif isinstance(msg, ToolMessage):
                 openai_messages.append(
@@ -208,7 +213,10 @@ class LangGraphAgent:
 
         assistant_message = response.choices[0].message
         content = assistant_message.content or ""
-        reasoning_content = self._extract_reasoning_content(assistant_message)
+        reasoning_content = extract_reasoning_content(assistant_message)
+        round_trip_reasoning_content = extract_reasoning_content(
+            assistant_message, preserve=True
+        )
         raw_tool_calls = assistant_message.tool_calls or []
 
         tool_calls = [
@@ -228,7 +236,14 @@ class LangGraphAgent:
             tool_names=[tc["name"] for tc in tool_calls],
         )
 
-        ai_message = AIMessage(content=content, tool_calls=tool_calls)
+        additional_kwargs = {}
+        if self._deepseek_thinking_enabled() and round_trip_reasoning_content:
+            additional_kwargs["reasoning_content"] = round_trip_reasoning_content
+        ai_message = AIMessage(
+            content=content,
+            tool_calls=tool_calls,
+            additional_kwargs=additional_kwargs,
+        )
 
         conversation_history = state["conversation_history"] + [
             {
@@ -251,20 +266,15 @@ class LangGraphAgent:
     @staticmethod
     def _extract_reasoning_content(message: Any) -> str:
         """Read provider-specific reasoning fields from a chat message."""
-        candidates = [getattr(message, "reasoning_content", None)]
-        model_extra = getattr(message, "model_extra", None)
-        if isinstance(model_extra, dict):
-            candidates.extend(
-                model_extra.get(field)
-                for field in ("reasoning_content", "reasoning", "thinking")
-            )
+        return extract_reasoning_content(message)
 
-        for candidate in candidates:
-            if isinstance(candidate, str) and candidate.strip():
-                return candidate.strip()
-            if isinstance(candidate, (dict, list)) and candidate:
-                return json.dumps(candidate, ensure_ascii=False, default=str)
-        return ""
+    def _deepseek_thinking_enabled(self) -> bool:
+        return deepseek_thinking_enabled(
+            {
+                "provider": getattr(self.args, "provider", None),
+                "thinking_level": getattr(self.args, "thinking_level", None),
+            }
+        )
 
     @staticmethod
     def _log_model_round(

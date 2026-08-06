@@ -13,6 +13,8 @@ from typing import Any
 
 import yaml
 
+from .model_request import ModelRequestConfigError, validate_thinking_config
+
 
 SCHEMA_ROUTER_PROTOCOL_VERSION = 3
 
@@ -69,6 +71,8 @@ _SECTIONS = {
     },
     "schema_router.model": {
         "name",
+        "provider",
+        "thinking_level",
         "temperature",
         "top_p",
         "max_tokens",
@@ -200,7 +204,15 @@ def _validate(raw: dict[str, Any]) -> None:
 
     model = _mapping(router, "model", "schema_router")
     _reject_unknown(model, _SECTIONS["schema_router.model"], "schema_router.model")
-    _require(model, _SECTIONS["schema_router.model"], "schema_router.model")
+    _require(
+        model,
+        _SECTIONS["schema_router.model"] - {"provider", "thinking_level"},
+        "schema_router.model",
+    )
+    try:
+        validate_thinking_config(model, location="schema_router.model")
+    except ModelRequestConfigError as exc:
+        raise SchemaRouterConfigError(str(exc)) from exc
     _string(model["name"], "schema_router.model.name")
     _number(model["temperature"], "schema_router.model.temperature")
     top_p = _number(model["top_p"], "schema_router.model.top_p")

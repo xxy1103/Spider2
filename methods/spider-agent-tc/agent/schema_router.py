@@ -14,6 +14,12 @@ from typing import Any, Callable
 
 from openai import APIConnectionError, APITimeoutError, OpenAI
 
+from .model_request import (
+    build_model_request_kwargs,
+    deepseek_thinking_enabled,
+    extract_reasoning_content,
+)
+
 
 logger = logging.getLogger(__name__)
 
@@ -994,6 +1000,9 @@ class SchemaRouterAgent:
                     top_p=self.model_config["top_p"],
                     max_tokens=self.model_config["max_tokens"],
                     n=1,
+                    **build_model_request_kwargs(
+                        self.model_config, location="schema_router.model"
+                    ),
                 )
                 return response, attempts
             except Exception as exc:  # noqa: BLE001
@@ -1102,6 +1111,13 @@ class SchemaRouterAgent:
                     }
                     for call in raw_calls
                 ]
+            reasoning_content = extract_reasoning_content(message, preserve=True)
+            if (
+                raw_calls
+                and reasoning_content
+                and deepseek_thinking_enabled(self.model_config)
+            ):
+                wire["reasoning_content"] = reasoning_content
             messages.append(wire)
             round_trace = {
                 "round": round_number,
@@ -1271,4 +1287,3 @@ def load_external_knowledge(
             f"External knowledge does not exist for {item['instance_id']}: {path}"
         )
     return path.read_text(encoding="utf-8").strip()
-

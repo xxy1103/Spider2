@@ -1,3 +1,4 @@
+import copy
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -331,23 +332,29 @@ def _submit_arguments():
     }
 
 
-def _agent(completions, *, max_rounds=6, max_attempts=3):
+def _agent(
+    completions, *, max_rounds=6, max_attempts=3,
+    provider=None, thinking_level=None,
+):
+    model_config = {
+        "name": "mock",
+        "temperature": 0,
+        "top_p": 1,
+        "max_tokens": 1000,
+        "retry": {
+            "max_attempts": max_attempts,
+            "initial_delay_seconds": 0,
+            "backoff_multiplier": 1,
+            "max_delay_seconds": 0,
+        },
+    }
+    if provider is not None:
+        model_config.update(provider=provider, thinking_level=thinking_level)
     return SchemaRouterAgent(
         model_client=SimpleNamespace(
             chat=SimpleNamespace(completions=completions)
         ),
-        model_config={
-            "name": "mock",
-            "temperature": 0,
-            "top_p": 1,
-            "max_tokens": 1000,
-            "retry": {
-                "max_attempts": max_attempts,
-                "initial_delay_seconds": 0,
-                "backoff_multiplier": 1,
-                "max_delay_seconds": 0,
-            },
-        },
+        model_config=model_config,
         system_prompt="router",
         max_rounds=max_rounds,
         max_tool_calls=24,
@@ -395,6 +402,68 @@ def test_last_round_forces_submission(catalog):
         "candidates"
     }
     assert result["trace"][-1]["stage"] == "submission_only"
+
+
+def test_router_passes_adapted_thinking_kwargs():
+    recording = _FakeCompletions(_submit_arguments(), submit_on_call=1)
+    agent = _agent(recording, provider="deepseek", thinking_level="xhigh")
+    agent._call_model([], tool_schemas=[])
+    assert recording.requests[0]["extra_body"] == {
+        "thinking": {"type": "enabled"}, "reasoning_effort": "max"
+    }
+
+
+@pytest.mark.parametrize(
+    "provider,should_round_trip", [("deepseek", True), ("gpt", False)]
+)
+def test_router_reasoning_round_trip_is_deepseek_only(
+    catalog, provider, should_round_trip
+):
+    class ReasoningCompletions:
+        def __init__(self):
+            self.requests = []
+
+        def create(inner_self, **kwargs):
+            inner_self.requests.append(copy.deepcopy(kwargs))
+            if len(inner_self.requests) == 1:
+                name, arguments = "list_table_families", "{}"
+            else:
+                name = "submit_table_selection"
+                arguments = json.dumps(_submit_arguments())
+            call = SimpleNamespace(
+                id=f"call-{len(inner_self.requests)}",
+                function=SimpleNamespace(name=name, arguments=arguments),
+            )
+            message = SimpleNamespace(
+                content="", reasoning_content="  provider reasoning  ", tool_calls=[call]
+            )
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=message)],
+                usage=SimpleNamespace(
+                    prompt_tokens=1, completion_tokens=1, total_tokens=2
+                ),
+            )
+
+    completions = ReasoningCompletions()
+    result = _run(
+        _agent(
+            completions,
+            max_rounds=2,
+            provider=provider,
+            thinking_level="high",
+        ),
+        _tools(catalog),
+    )
+    assert result["completed"] is True
+    assistant_messages = [
+        message
+        for message in completions.requests[1]["messages"]
+        if message["role"] == "assistant"
+    ]
+    assert len(assistant_messages) == 1
+    assert ("reasoning_content" in assistant_messages[0]) is should_round_trip
+    if should_round_trip:
+        assert assistant_messages[0]["reasoning_content"] == "  provider reasoning  "
 
 
 def test_router_prompt_does_not_ask_model_to_echo_instance_id():

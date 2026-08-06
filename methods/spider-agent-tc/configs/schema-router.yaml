@@ -15,6 +15,8 @@ paths:
 schema_router:
   model:
     name: deepseek-v4-flash
+    provider: deepseek
+    thinking_level: high
     temperature: 0
     top_p: 1
     max_tokens: 12000

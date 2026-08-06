@@ -123,6 +123,8 @@ def make_openai_client(config: LoadedConfig):
 
 
 def check_model(config: LoadedConfig) -> None:
+    from agent.model_request import build_model_request_kwargs
+
     client = make_openai_client(config)
     client.chat.completions.create(
         model=config.raw["model"]["name"],
@@ -130,6 +132,7 @@ def check_model(config: LoadedConfig) -> None:
         temperature=0,
         max_tokens=8,
         n=1,
+        **build_model_request_kwargs(config.raw["model"]),
     )
 
 
@@ -275,6 +278,8 @@ def stop_server(process: subprocess.Popen | None) -> None:
 
 
 def build_agent_args(config: LoadedConfig, port: int) -> SimpleNamespace:
+    from agent.model_request import build_model_request_kwargs
+
     raw = config.raw
     return SimpleNamespace(
         input_file=str(config.paths["input_file"]),
@@ -288,6 +293,9 @@ def build_agent_args(config: LoadedConfig, port: int) -> SimpleNamespace:
         max_new_tokens=raw["model"]["max_tokens"],
         model_request_timeout=raw["model"]["request_timeout_seconds"],
         retry=raw["model"]["retry"],
+        model_request_kwargs=build_model_request_kwargs(raw["model"]),
+        provider=raw["model"].get("provider"),
+        thinking_level=raw["model"].get("thinking_level"),
         api_host=raw["server"]["host"],
         api_port=port,
         tool_request_timeout=raw["server"]["request_timeout_seconds"],

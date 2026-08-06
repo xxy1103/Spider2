@@ -117,6 +117,24 @@ def test_router_config_rejects_unknown_fields(monkeypatch, tmp_path):
         load_schema_router_config(path)
 
 
+def test_router_thinking_fields_must_be_configured_as_a_pair(monkeypatch, tmp_path):
+    value = _config()
+    value["schema_router"]["model"]["provider"] = "deepseek"
+    path = _materialize(monkeypatch, tmp_path, value)
+    with pytest.raises(SchemaRouterConfigError, match="configured together"):
+        load_schema_router_config(path)
+
+
+def test_router_rejects_provider_specific_thinking_level(monkeypatch, tmp_path):
+    value = _config()
+    value["schema_router"]["model"].update(
+        provider="gemini", thinking_level="xhigh"
+    )
+    path = _materialize(monkeypatch, tmp_path, value)
+    with pytest.raises(SchemaRouterConfigError, match="not supported for gemini"):
+        load_schema_router_config(path)
+
+
 def test_router_config_rejects_legacy_split_fields(monkeypatch, tmp_path):
     value = _config()
     value["evaluation"]["phase"] = "development"

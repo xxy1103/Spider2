@@ -16,6 +16,7 @@ from typing import Any
 import yaml
 
 from agent.schema_router_config import SCHEMA_ROUTER_PROTOCOL_VERSION
+from agent.model_request import ModelRequestConfigError, validate_thinking_config
 
 
 class ConfigError(ValueError):
@@ -47,7 +48,7 @@ _SCHEMA = {
     "experiment": {"name", "results_root", "resume"},
     "paths": {"input_file", "databases", "documents", "system_prompt"},
     "tasks": {"instance_ids", "index_ranges", "databases", "sample_size", "seed", "order"},
-    "model": {"name", "temperature", "top_p", "max_tokens", "request_timeout_seconds", "retry"},
+    "model": {"name", "provider", "thinking_level", "temperature", "top_p", "max_tokens", "request_timeout_seconds", "retry"},
     "model.retry": {
         "max_attempts",
         "initial_delay_seconds",
@@ -93,6 +94,8 @@ _SCHEMA = {
     },
     "schema_router.model": {
         "name",
+        "provider",
+        "thinking_level",
         "temperature",
         "top_p",
         "max_tokens",
@@ -195,7 +198,10 @@ def _validate_main(raw: dict[str, Any]) -> None:
     for section in ("experiment", "paths", "tasks", "model", "agent", "server", "tools", "preflight", "schema_router"):
         mapping = _mapping(raw, section, "config")
         _reject_unknown(mapping, _SCHEMA[section], section)
-        _required(mapping, _SCHEMA[section], section)
+        required = _SCHEMA[section]
+        if section == "model":
+            required = required - {"provider", "thinking_level"}
+        _required(mapping, required, section)
 
     # Validate auto_evaluate if present
     if "auto_evaluate" in raw:
@@ -211,7 +217,11 @@ def _validate_main(raw: dict[str, Any]) -> None:
     router["prompt"] = _string(router["prompt"], "schema_router.prompt")
     router_model = _mapping(router, "model", "schema_router")
     _reject_unknown(router_model, _SCHEMA["model"], "schema_router.model")
-    _required(router_model, _SCHEMA["model"], "schema_router.model")
+    _required(
+        router_model,
+        _SCHEMA["model"] - {"provider", "thinking_level"},
+        "schema_router.model",
+    )
     router_retry = _mapping(router_model, "retry", "schema_router.model")
     _reject_unknown(router_retry, _SCHEMA["model.retry"], "schema_router.model.retry")
     _required(router_retry, _SCHEMA["model.retry"], "schema_router.model.retry")
@@ -294,6 +304,11 @@ def _validate_main(raw: dict[str, Any]) -> None:
         raise ConfigError("tasks.order must be 'seeded_shuffle'")
 
     model = raw["model"]
+    try:
+        validate_thinking_config(model, location="model")
+        validate_thinking_config(router_model, location="schema_router.model")
+    except ModelRequestConfigError as exc:
+        raise ConfigError(str(exc)) from exc
     model["name"] = _string(model["name"], "model.name")
     if "<" in model["name"] or ">" in model["name"] or model["name"].startswith("replace-"):
         raise ConfigError("model.name still contains a placeholder")

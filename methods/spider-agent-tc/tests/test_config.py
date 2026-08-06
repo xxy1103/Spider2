@@ -126,6 +126,24 @@ def test_smoke_config_schema_is_valid():
     _validate_main(raw)
 
 
+@pytest.mark.parametrize("location", ["model", "schema_router.model"])
+def test_thinking_fields_must_be_configured_as_a_pair(location):
+    raw = load_smoke()
+    target = raw["model"] if location == "model" else raw["schema_router"]["model"]
+    target["provider"] = "gpt"
+    with pytest.raises(ConfigError, match="configured together"):
+        _validate_main(raw)
+
+
+@pytest.mark.parametrize("location", ["model", "schema_router.model"])
+def test_provider_specific_thinking_level_is_validated(location):
+    raw = load_smoke()
+    target = raw["model"] if location == "model" else raw["schema_router"]["model"]
+    target.update(provider="gemini", thinking_level="xhigh")
+    with pytest.raises(ConfigError, match="not supported for gemini"):
+        _validate_main(raw)
+
+
 def test_schema_router_requires_strict_fail_task_policy():
     raw = load_smoke()
     raw["model"]["name"] = "test-model"

@@ -11,7 +11,7 @@ sys.path.insert(0, str(TC_ROOT))
 from agent.langgraph_agent import LangGraphAgent
 from agent.llm_agent import LLMAgent
 from config import ConfigError, LoadedConfig
-from run import find_available_port, prepare_experiment, start_server, stop_server
+from run import check_model, find_available_port, prepare_experiment, start_server, stop_server
 
 
 def test_port_falls_back_when_preferred_is_busy():
@@ -140,6 +140,39 @@ def test_model_retry_stops_after_configured_attempts(monkeypatch, tmp_path, caps
     assert "secret" not in capsys.readouterr().out
 
 
+def test_main_agent_passes_adapted_thinking_kwargs(monkeypatch, tmp_path):
+    args = SimpleNamespace(
+        model_base_url="https://api.example/v1",
+        model_api_key="secret",
+        model_request_timeout=1,
+        retry={"max_attempts": 1, "initial_delay_seconds": 0, "backoff_multiplier": 1, "max_delay_seconds": 0},
+        output_folder=str(tmp_path), prompt_strategy="spider-agent",
+        tool_request_timeout=1, databases_path=str(tmp_path), model="model",
+        temperature=0, top_p=1, max_new_tokens=10,
+        model_request_kwargs={"extra_body": {"reasoning_effort": "high"}},
+    )
+    monkeypatch.setattr("agent.langgraph_agent.OpenAI", Mock)
+    agent = LLMAgent(args)
+    agent.model_client.chat.completions.create.return_value = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="response"))]
+    )
+    assert agent.call_llm([{"role": "user", "content": "test"}]) == "response"
+    assert agent.model_client.chat.completions.create.call_args.kwargs["extra_body"] == {
+        "reasoning_effort": "high"
+    }
+
+
+def test_preflight_passes_adapted_thinking_kwargs(monkeypatch):
+    create = Mock()
+    monkeypatch.setattr(
+        "run.make_openai_client",
+        lambda _config: SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create))),
+    )
+    config = SimpleNamespace(raw={"model": {"name": "model", "provider": "deepseek", "thinking_level": "none"}})
+    check_model(config)
+    assert create.call_args.kwargs["extra_body"] == {"thinking": {"type": "disabled"}}
+
+
 def test_model_round_logs_provider_reasoning_and_assistant_content(caplog):
     agent = object.__new__(LangGraphAgent)
     agent.args = SimpleNamespace(model_api_key="secret")
@@ -172,6 +205,45 @@ def test_model_round_logs_provider_reasoning_and_assistant_content(caplog):
     assert result["conversation_history"][-1]["reasoning_content"] == (
         "The task requires one row per month."
     )
+
+
+@pytest.mark.parametrize(
+    "provider,thinking_level,should_round_trip",
+    [("deepseek", "high", True), ("gpt", "high", False), ("gemini", "high", False)],
+)
+def test_reasoning_round_trip_is_limited_to_deepseek_thinking(
+    provider, thinking_level, should_round_trip
+):
+    agent = object.__new__(LangGraphAgent)
+    agent.args = SimpleNamespace(
+        model_api_key="secret", provider=provider, thinking_level=thinking_level
+    )
+    tool_call = SimpleNamespace(
+        id="call-1",
+        function=SimpleNamespace(name="search_schema", arguments='{"query":"orders"}'),
+    )
+    agent._call_llm_with_retry = Mock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="", reasoning_content="  provider reasoning  ", tool_calls=[tool_call]
+                    )
+                )
+            ]
+        )
+    )
+    state = {
+        "messages": [], "item": {"instance_id": "task"},
+        "conversation_history": [], "round_num": 0, "rollout_idx": 0,
+        "performance": LangGraphAgent._new_performance(),
+    }
+    result = agent._call_model_node(state)
+    wire = agent._to_openai_messages(result["messages"])[0]
+    assert ("reasoning_content" in wire) is should_round_trip
+    if should_round_trip:
+        assert wire["reasoning_content"] == "  provider reasoning  "
+    assert result["conversation_history"][-1]["reasoning_content"] == "provider reasoning"
 
 
 def test_model_round_uses_working_note_when_provider_has_no_reasoning(caplog):

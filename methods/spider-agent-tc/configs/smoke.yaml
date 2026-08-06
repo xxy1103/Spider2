@@ -1,5 +1,5 @@
 experiment:
-  name: first-50-test
+  name: first-50-test-gemini3.1-pro
   results_root: methods/spider-agent-tc/results
   resume: true
 
@@ -21,8 +21,9 @@ tasks:
   order: seeded_shuffle
 
 model:
-  name: deepseek-v4-pro
-  temperature: 0
+  #name: deepseek-v4-pro
+  name: gemini-pro-agent
+  temperature: 0.2
   top_p: 1
   max_tokens: 100000
   request_timeout_seconds: 180
@@ -41,8 +42,8 @@ schema_router:
   enabled: true
   prompt: methods/spider-agent-tc/prompts/schema_router.txt
   model:
-    name: deepseek-v4-flash
-    temperature: 0
+    name: gemini-pro-agent
+    temperature: 0.2
     top_p: 1
     max_tokens: 12000
     request_timeout_seconds: 180

@@ -161,6 +161,37 @@ auto_evaluate:
 For a real run, use `configs/smoke.yaml`, whose Snowflake mode is `live`, and
 provide the complete Snowflake section in `configs/secrets.yaml`.
 
+## 配置模型思考等级
+
+主 Agent 的 `model` 与集成/独立 Schema Router 的 `model` 都可增加
+`provider` 和 `thinking_level`。这两个字段必须成对出现；不配置时不会附加
+任何思考参数，旧 YAML 的请求行为保持不变。Provider 只读取显式配置，不会
+根据模型名猜测：
+
+```yaml
+model:
+  name: your-model-name
+  provider: gpt       # gpt | gemini | deepseek
+  thinking_level: high
+```
+
+可用等级如下：
+
+- GPT：`none`、`minimal`、`low`、`medium`、`high`、`xhigh`；
+- Gemini：`none`、`minimal`、`low`、`medium`、`high`；
+- DeepSeek：`none`、`low`、`medium`、`high`、`xhigh`、`max`。
+
+这些是配置层的 provider 级允许值。GPT/Gemini 的具体可用值仍受模型和网关
+约束，例如部分 Gemini 不支持 `none`/`minimal`，不同 GPT 模型支持的等级也
+可能不同；若 API 拒绝，请改为该模型实际支持的值。代码不会根据模型别名判断
+具体型号，因此不在本地做更细的型号级校验。
+
+GPT 与 Gemini 将等级作为 `reasoning_effort` 发送。DeepSeek 的 `none` 会
+禁用 thinking；`low` 到 `high` 启用 thinking 并发送 `reasoning_effort: high`，
+`xhigh` 与 `max` 则发送 `reasoning_effort: max`。DeepSeek thinking 与原生工具
+调用同时启用时，运行器会把服务端返回的 `reasoning_content` 原样带入下一轮；
+GPT/Gemini 不会收到这个 DeepSeek 专用消息字段。
+
 ## Selecting tasks
 
 Task filters are applied as an intersection in this order:

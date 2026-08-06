@@ -1010,12 +1010,9 @@ TOOL_DEFINITIONS = [
     ToolDefinition(
         "execute_sql",
         "Validate and execute one read-only Snowflake SQL query or SQL artifact, returning a bounded preview and execution evidence.",
-        {
-            **_object_schema(
-                {"sql": {"type": "string"}, "sql_id": {"type": "string"}}
-            ),
-            "oneOf": [{"required": ["sql"]}, {"required": ["sql_id"]}],
-        },
+        _object_schema(
+            {"sql": {"type": "string"}, "sql_id": {"type": "string"}}
+        ),
         RUNTIME.execute_sql,
     ),
     ToolDefinition(
