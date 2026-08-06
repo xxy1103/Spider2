@@ -245,6 +245,7 @@ def run_integrated_schema_router(
         "tool_calls",
         "input_tokens",
         "output_tokens",
+        "reasoning_tokens",
         "total_tokens",
         "duration_seconds",
     )

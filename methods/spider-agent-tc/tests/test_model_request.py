@@ -17,12 +17,27 @@ from agent.model_request import (
         (
             "deepseek",
             "low",
+            {"extra_body": {"thinking": {"type": "enabled"}, "reasoning_effort": "low"}},
+        ),
+        (
+            "deepseek",
+            "high",
+            {"extra_body": {"thinking": {"type": "enabled"}, "reasoning_effort": "high"}},
+        ),
+        (
+            "deepseek",
+            "medium",
             {"extra_body": {"thinking": {"type": "enabled"}, "reasoning_effort": "high"}},
         ),
         (
             "deepseek",
             "max",
             {"extra_body": {"thinking": {"type": "enabled"}, "reasoning_effort": "max"}},
+        ),
+        (
+            "deepseek",
+            "xhigh",
+            {"extra_body": {"thinking": {"type": "enabled"}, "reasoning_effort": "high"}},
         ),
     ],
 )

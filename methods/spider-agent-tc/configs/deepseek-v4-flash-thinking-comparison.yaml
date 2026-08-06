@@ -1,0 +1,18 @@
+experiment:
+  name: deepseek-v4-flash-thinking-comparison
+  results_root: methods/spider-agent-tc/results
+  resume: true
+
+base_config: methods/spider-agent-tc/configs/smoke.yaml
+official_sql_dir: spider2-snow/evaluation_suite/gold/sql
+evaluation_standard: spider2-snow/evaluation_suite/gold/spider2snow_eval.jsonl
+
+conditions:
+  - none
+  - low
+  - high
+  - max
+
+sampling:
+  sample_size: 50
+  seed: 42

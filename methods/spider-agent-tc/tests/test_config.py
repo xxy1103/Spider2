@@ -131,6 +131,7 @@ def test_thinking_fields_must_be_configured_as_a_pair(location):
     raw = load_smoke()
     target = raw["model"] if location == "model" else raw["schema_router"]["model"]
     target["provider"] = "gpt"
+    target.pop("thinking_level", None)
     with pytest.raises(ConfigError, match="configured together"):
         _validate_main(raw)
 

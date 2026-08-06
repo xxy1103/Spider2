@@ -210,6 +210,8 @@ class LangGraphAgent:
         performance["model_calls"] += 1
         performance["model_attempts"] += attempt_count
         performance["model_duration_seconds"] += time.perf_counter() - started_at
+        for key, value in self._usage(response).items():
+            performance[key] += value
 
         assistant_message = response.choices[0].message
         content = assistant_message.content or ""
@@ -455,6 +457,17 @@ class LangGraphAgent:
         return result
 
     @staticmethod
+    def _usage(response: Any) -> dict[str, int]:
+        usage = getattr(response, "usage", None)
+        details = getattr(usage, "completion_tokens_details", None)
+        return {
+            "input_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
+            "output_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
+            "reasoning_tokens": int(getattr(details, "reasoning_tokens", 0) or 0),
+            "total_tokens": int(getattr(usage, "total_tokens", 0) or 0),
+        }
+
+    @staticmethod
     def _new_performance() -> dict[str, Any]:
         return {
             "started_at": datetime.now(timezone.utc).isoformat(),
@@ -463,6 +476,10 @@ class LangGraphAgent:
             "model_attempts": 0,
             "model_errors": 0,
             "model_duration_seconds": 0.0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "reasoning_tokens": 0,
+            "total_tokens": 0,
             "tool_calls": 0,
             "tool_errors": 0,
             "tool_duration_seconds": 0.0,
@@ -857,6 +874,10 @@ class LangGraphAgent:
             "model_attempts",
             "model_errors",
             "model_duration_seconds",
+            "input_tokens",
+            "output_tokens",
+            "reasoning_tokens",
+            "total_tokens",
             "tool_calls",
             "tool_errors",
             "tool_duration_seconds",

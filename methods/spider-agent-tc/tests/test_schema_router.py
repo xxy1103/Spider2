@@ -409,7 +409,7 @@ def test_router_passes_adapted_thinking_kwargs():
     agent = _agent(recording, provider="deepseek", thinking_level="xhigh")
     agent._call_model([], tool_schemas=[])
     assert recording.requests[0]["extra_body"] == {
-        "thinking": {"type": "enabled"}, "reasoning_effort": "max"
+        "thinking": {"type": "enabled"}, "reasoning_effort": "high"
     }
 
 

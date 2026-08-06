@@ -1033,9 +1033,11 @@ class SchemaRouterAgent:
     @staticmethod
     def _usage(response: Any) -> dict[str, int]:
         usage = getattr(response, "usage", None)
+        details = getattr(usage, "completion_tokens_details", None)
         return {
             "input_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
             "output_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
+            "reasoning_tokens": int(getattr(details, "reasoning_tokens", 0) or 0),
             "total_tokens": int(getattr(usage, "total_tokens", 0) or 0),
         }
 
@@ -1060,6 +1062,7 @@ class SchemaRouterAgent:
             "tool_errors": 0,
             "input_tokens": 0,
             "output_tokens": 0,
+            "reasoning_tokens": 0,
             "total_tokens": 0,
             "forced_submissions": 0,
             "format_repairs": 0,

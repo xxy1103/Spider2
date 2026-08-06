@@ -341,6 +341,7 @@ def aggregate_scores(
         "tool_errors",
         "input_tokens",
         "output_tokens",
+        "reasoning_tokens",
         "total_tokens",
         "forced_submissions",
         "format_repairs",

@@ -187,8 +187,8 @@ model:
 具体型号，因此不在本地做更细的型号级校验。
 
 GPT 与 Gemini 将等级作为 `reasoning_effort` 发送。DeepSeek 的 `none` 会
-禁用 thinking；`low` 到 `high` 启用 thinking 并发送 `reasoning_effort: high`，
-`xhigh` 与 `max` 则发送 `reasoning_effort: max`。DeepSeek thinking 与原生工具
+禁用 thinking；`low`、`high`、`max` 会原样发送对应的 `reasoning_effort`；
+兼容值 `medium` 与 `xhigh` 统一映射为 `high`。DeepSeek thinking 与原生工具
 调用同时启用时，运行器会把服务端返回的 `reasoning_content` 原样带入下一轮；
 GPT/Gemini 不会收到这个 DeepSeek 专用消息字段。
 
@@ -345,6 +345,22 @@ Router 只拥有元数据工具：表族列表、候选搜索、表族描述、�
 非法引用门槛，未达标时报告仍会落盘，命令返回状态码 2。
 
 ## Export submission SQL
+
+## DeepSeek V4 Flash 思考档位对比实验
+
+四档配对实验使用固定的 50/120 道 Gold SQL 题，并让集成 Schema Router 与
+主 Agent 在同一条件下使用 `none`、`low`、`high` 或 `max`：
+
+```powershell
+conda run --no-capture-output -n spider2-tc python -u thinking_comparison.py `
+  --config configs/deepseek-v4-flash-thinking-comparison.yaml
+```
+
+入口会先固化 `task-set.json`，再串行执行四个隔离条件。每个条件直接评分本次
+主运行产生的 `routing/<instance>/rollout-0.json`，最终 SQL 则分别报告 SQL 提交率、
+已提交答案准确率和以固定 50 题为分母的端到端官方正确率。总结果写入
+`comparison-summary.json` 与 `comparison-report.md`。中断后使用同一命令续跑；
+已完成且已评分的条件不会重复执行。
 
 The submission converter is unchanged:
 

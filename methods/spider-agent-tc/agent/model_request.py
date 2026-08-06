@@ -60,7 +60,7 @@ def build_model_request_kwargs(
         return {"extra_body": {"reasoning_effort": level}}
     if level == "none":
         return {"extra_body": {"thinking": {"type": "disabled"}}}
-    effort = "max" if level in {"xhigh", "max"} else "high"
+    effort = level if level in {"low", "high", "max"} else "high"
     return {
         "extra_body": {
             "thinking": {"type": "enabled"},
