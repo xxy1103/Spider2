@@ -303,6 +303,7 @@ def build_agent_args(config: LoadedConfig, port: int) -> SimpleNamespace:
         num_threads=raw["agent"]["num_threads"],
         rollout_number=raw["agent"]["rollout_number"],
         routing_index_path=str(config.experiment_dir / "routing-index.json"),
+        schema_router_enabled=bool(raw["schema_router"]["enabled"]),
         prompt_strategy="spider-agent",
         model_base_url=config.secrets["model_api"]["base_url"],
         model_api_key=config.secrets["model_api"]["api_key"],
@@ -329,11 +330,22 @@ def write_summary(config: LoadedConfig, summary: dict[str, Any]) -> None:
     summary["mock_run"] = config.raw["tools"]["sql"]["mode"] == "mock"
     summary["finished_at"] = datetime.now(timezone.utc).isoformat()
     routing_path = config.experiment_dir / "routing-index.json"
-    if routing_path.is_file():
+    if not config.raw["schema_router"]["enabled"]:
+        summary["schema_router"] = {
+            "enabled": False,
+            "mode": "disabled",
+            "schema_scope": "full_database",
+            "expected_routes": 0,
+            "valid_routes": 0,
+            "failed_routes": 0,
+        }
+    elif routing_path.is_file():
         routing = json.loads(routing_path.read_text(encoding="utf-8"))
         routes = list(routing.get("routes", {}).values())
         summary["schema_router"] = {
+            "enabled": True,
             "mode": routing.get("mode"),
+            "schema_scope": "routed",
             "failure_policy": routing.get("failure_policy"),
             "expected_routes": routing.get("expected_routes", 0),
             "valid_routes": routing.get("valid_routes", 0),
@@ -377,16 +389,19 @@ def execute(config: LoadedConfig) -> int:
     run_preflight(config, port)
     prepare_experiment(config, port)
     from servers.structured_tools import build_catalog
-    from agent.schema_router import SchemaRouterCatalog
-    from agent.schema_router_runtime import run_integrated_schema_router
+    router_enabled = bool(config.raw["schema_router"]["enabled"])
 
     log_path = configure_file_logging(config)
     build_catalog(config)
-    router_catalog = SchemaRouterCatalog(
-        config.paths["databases"],
-        {item["db_id"] for item in config.selected_items},
-    )
-    run_integrated_schema_router(config, router_catalog)
+    if router_enabled:
+        from agent.schema_router import SchemaRouterCatalog
+        from agent.schema_router_runtime import run_integrated_schema_router
+
+        router_catalog = SchemaRouterCatalog(
+            config.paths["databases"],
+            {item["db_id"] for item in config.selected_items},
+        )
+        run_integrated_schema_router(config, router_catalog)
 
     process = None
     try:

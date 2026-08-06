@@ -638,7 +638,14 @@ class LangGraphAgent:
             return None
 
         try:
-            route = get_route(self.args.output_folder, instance_id, rollout_idx)
+            if getattr(self.args, "schema_router_enabled", True):
+                route = get_route(self.args.output_folder, instance_id, rollout_idx)
+            else:
+                route = {
+                    "schema_scope": "full_database",
+                    "allowed_database": item["db_id"],
+                    "allowed_physical_tables": [],
+                }
             initial_messages = self.prompt_builder.build_initial_prompt(
                 item, self.args, rollout_idx
             )
@@ -762,7 +769,8 @@ class LangGraphAgent:
                 if rollout_idx in terminated_rollouts:
                     continue
                 try:
-                    get_route(self.args.output_folder, instance_id, rollout_idx)
+                    if getattr(self.args, "schema_router_enabled", True):
+                        get_route(self.args.output_folder, instance_id, rollout_idx)
                 except RuntimeError as exc:
                     self.file_manager.upsert_rollout_result(
                         {

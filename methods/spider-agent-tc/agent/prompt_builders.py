@@ -65,44 +65,61 @@ class SpiderAgentPromptBuilder(BasePromptBuilder):
         lines = []
         for schema_name, table_names in tables_by_schema.items():
             lines.append(f"- {schema_name} ({len(table_names)} tables):")
-            lines.extend(f"  - {table_name}" for table_name in table_names)
+            lines.extend(
+                f"  - {item['db_id']}.{schema_name}.{table_name}"
+                for table_name in table_names
+            )
         return "\n".join(lines)
 
     def build_initial_prompt(self, item, args, rollout_idx=0):
         system_prompt = self.load_system_prompt(args)
         external_knowledge_content = self.load_external_knowledge(item.get('external_knowledge'), args)
-        route = get_route(args.output_folder, item["instance_id"], rollout_idx)
-        allowed = set(route["allowed_physical_tables"])
-        grouped = defaultdict(list)
-        for candidate in route.get("candidates", []):
-            tier = candidate.get("tier", "possible")
-            roles = ", ".join(candidate.get("roles", [])) or "unspecified"
-            for table in candidate.get("resolved_physical_tables", []):
-                if table in allowed:
-                    grouped[tier].append((table, roles))
-        lines = []
-        emitted = set()
-        for tier in ("required", "supporting", "possible"):
-            lines.append(f"{tier}:")
-            for table, roles in grouped.get(tier, []):
+        if getattr(args, "schema_router_enabled", True):
+            route = get_route(args.output_folder, item["instance_id"], rollout_idx)
+        else:
+            route = {"schema_scope": "full_database", "allowed_physical_tables": []}
+        if route.get("schema_scope", "routed") == "full_database":
+            schema_overview = self.load_schema_overview(item, args)
+            scope_label = "Full database catalog (schema_scope=full_database):"
+            access_text = (
+                "Use the structured tools to inspect any table in this database "
+                "catalog."
+            )
+        else:
+            allowed = set(route["allowed_physical_tables"])
+            grouped = defaultdict(list)
+            for candidate in route.get("candidates", []):
+                tier = candidate.get("tier", "possible")
+                roles = ", ".join(candidate.get("roles", [])) or "unspecified"
+                for table in candidate.get("resolved_physical_tables", []):
+                    if table in allowed:
+                        grouped[tier].append((table, roles))
+            lines = []
+            emitted = set()
+            for tier in ("required", "supporting", "possible"):
+                lines.append(f"{tier}:")
+                for table, roles in grouped.get(tier, []):
+                    if table not in emitted:
+                        lines.append(f"- {table} (roles: {roles})")
+                        emitted.add(table)
+            for table in route["allowed_physical_tables"]:
                 if table not in emitted:
-                    lines.append(f"- {table} (roles: {roles})")
-                    emitted.add(table)
-        for table in route["allowed_physical_tables"]:
-            if table not in emitted:
-                lines.append(f"- {table} (roles: unspecified)")
-        schema_overview = "\n".join(lines)
+                    lines.append(f"- {table} (roles: unspecified)")
+            schema_overview = "\n".join(lines)
+            scope_label = "Strict routed schema whitelist:"
+            access_text = (
+                "Use the structured tools to inspect only the routed tables above. "
+                "Tables outside this whitelist are not available."
+            )
         
         user_content = f"""Question: {item['instruction']}
 External Knowledge: {external_knowledge_content if external_knowledge_content else 'None'}
 
 The allowed database for this task is {item['db_id']}.
-Strict routed schema whitelist:
+{scope_label}
 {schema_overview}
 
-Use the structured tools
-to inspect only the routed tables above. Tables outside this whitelist are not
-available. Every physical table reference must
+{access_text} Every physical table reference must
 use database_name.schema_name.table_name. Submit only a complete SQL query that
 exactly matches a successful execution."""
 

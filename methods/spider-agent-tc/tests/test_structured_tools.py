@@ -187,6 +187,25 @@ def test_strict_route_hides_and_rejects_non_candidate_tables(tmp_path):
         runtime._validate_sql("SELECT * FROM DB1.S.T2", strict)
 
 
+def test_full_database_scope_allows_same_database_catalog_only(tmp_path):
+    config = make_config(tmp_path)
+    write_table(config.paths["databases"], "DB1", "S", "T1")
+    write_table(config.paths["databases"], "DB1", "S", "T2")
+    write_table(config.paths["databases"], "DB2", "S", "T3")
+    build_catalog(config)
+    runtime = StructuredToolRuntime()
+    runtime.configure(config)
+    full = context(allowed_tables=[])
+    full["schema_scope"] = "full_database"
+    described = content(
+        runtime.describe_table(table="DB1.S.T2", _context=full)
+    )
+    assert described["table"] == "DB1.S.T2"
+    assert runtime._validate_sql("SELECT * FROM DB1.S.T2", full)["tables"]
+    with pytest.raises(ValueError, match="outside current database scope"):
+        runtime._validate_sql("SELECT * FROM DB2.S.T3", full)
+
+
 def test_initial_user_message_contains_indexed_schema_overview(tmp_path):
     config = make_config(tmp_path)
     write_table(config.paths["databases"], "DB1", "S", "T1")
@@ -237,6 +256,27 @@ def test_initial_user_message_contains_indexed_schema_overview(tmp_path):
     assert "first:" not in user_content
     assert "last:" not in user_content
     assert "get_task_context" not in user_content
+
+
+def test_disabled_router_prompt_does_not_read_routing_index(tmp_path):
+    config = make_config(tmp_path)
+    write_table(config.paths["databases"], "DB1", "S", "T1")
+    build_catalog(config)
+    system_prompt = tmp_path / "system.txt"
+    system_prompt.write_text("system", encoding="utf-8")
+    args = SimpleNamespace(
+        output_folder=str(config.experiment_dir),
+        system_prompt_path=str(system_prompt),
+        documents_path=str(config.paths["documents"]),
+        schema_router_enabled=False,
+    )
+    messages = SpiderAgentPromptBuilder().build_initial_prompt(
+        config.selected_items[0], args
+    )
+    user_content = messages[1]["content"]
+    assert "schema_scope=full_database" in user_content
+    assert "Strict routed schema whitelist" not in user_content
+    assert "DB1.S.T1" in user_content
 
 
 def test_large_samples_are_loaded_on_demand_and_bounded(tmp_path):

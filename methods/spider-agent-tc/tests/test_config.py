@@ -11,6 +11,7 @@ TC_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TC_ROOT))
 
 import config as config_module
+from run import write_summary
 from config import (
     ConfigError,
     LoadedConfig,
@@ -126,6 +127,50 @@ def test_smoke_config_schema_is_valid():
     _validate_main(raw)
 
 
+def test_schema_router_enabled_must_be_boolean():
+    raw = load_smoke()
+    raw["schema_router"]["enabled"] = "false"
+    with pytest.raises(ConfigError, match="must be a boolean"):
+        _validate_main(raw)
+
+
+def test_disabled_schema_router_does_not_validate_router_policy():
+    raw = load_smoke()
+    raw["schema_router"]["enabled"] = False
+    raw["schema_router"]["integration"].update(
+        mode="full_database", failure_policy="continue", include_tiers=[]
+    )
+    _validate_main(raw)
+
+
+def test_disabled_schema_router_is_recorded_in_run_summary(tmp_path):
+    config = LoadedConfig(
+        config_path=tmp_path / "config.yaml",
+        repo_root=tmp_path,
+        raw={
+            "schema_router": {"enabled": False},
+            "tools": {"sql": {"mode": "mock"}},
+        },
+        secrets={},
+        paths={},
+        selected_items=[],
+        fingerprint="fingerprint",
+        run_dir=tmp_path,
+    )
+
+    write_summary(config, {"failed_instance_ids": []})
+
+    summary = json.loads((tmp_path / "run-summary.json").read_text(encoding="utf-8"))
+    assert summary["schema_router"] == {
+        "enabled": False,
+        "mode": "disabled",
+        "schema_scope": "full_database",
+        "expected_routes": 0,
+        "valid_routes": 0,
+        "failed_routes": 0,
+    }
+
+
 @pytest.mark.parametrize("location", ["model", "schema_router.model"])
 def test_thinking_fields_must_be_configured_as_a_pair(location):
     raw = load_smoke()
@@ -148,6 +193,7 @@ def test_provider_specific_thinking_level_is_validated(location):
 def test_schema_router_requires_strict_fail_task_policy():
     raw = load_smoke()
     raw["model"]["name"] = "test-model"
+    raw["schema_router"]["enabled"] = True
     raw["schema_router"]["integration"]["failure_policy"] = "full_database"
 
     with pytest.raises(ConfigError, match="failure_policy must be 'fail_task'"):

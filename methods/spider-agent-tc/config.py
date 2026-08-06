@@ -212,8 +212,8 @@ def _validate_main(raw: dict[str, Any]) -> None:
     _reject_unknown(retry, _SCHEMA["model.retry"], "model.retry")
     _required(retry, _SCHEMA["model.retry"], "model.retry")
     router = raw["schema_router"]
-    if router["enabled"] is not True:
-        raise ConfigError("schema_router.enabled must be true")
+    if not isinstance(router["enabled"], bool):
+        raise ConfigError("schema_router.enabled must be a boolean")
     router["prompt"] = _string(router["prompt"], "schema_router.prompt")
     router_model = _mapping(router, "model", "schema_router")
     _reject_unknown(router_model, _SCHEMA["model"], "schema_router.model")
@@ -232,13 +232,17 @@ def _validate_main(raw: dict[str, Any]) -> None:
     _required(
         integration, _SCHEMA["schema_router.integration"], "schema_router.integration"
     )
-    if integration["mode"] != "strict":
+    if router["enabled"] and integration["mode"] != "strict":
         raise ConfigError("schema_router.integration.mode must be 'strict'")
-    if integration["failure_policy"] != "fail_task":
+    if router["enabled"] and integration["failure_policy"] != "fail_task":
         raise ConfigError(
             "schema_router.integration.failure_policy must be 'fail_task'"
         )
-    if integration["include_tiers"] != ["required", "supporting", "possible"]:
+    if router["enabled"] and integration["include_tiers"] != [
+        "required",
+        "supporting",
+        "possible",
+    ]:
         raise ConfigError(
             "schema_router.integration.include_tiers must be "
             "[required, supporting, possible]"

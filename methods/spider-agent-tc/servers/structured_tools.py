@@ -295,14 +295,21 @@ class StructuredToolRuntime:
             raise ValueError("Incomplete injected task context")
         return raw
 
-    @staticmethod
-    def _allowed_tables(context: dict[str, Any]) -> set[str]:
-        if context.get("schema_scope") != "routed":
-            raise ValueError("Only strict routed schema scope is supported")
-        values = context.get("allowed_physical_tables")
-        if not isinstance(values, list) or not values:
-            raise ValueError("Strict routed schema whitelist is empty")
-        return {str(value).upper() for value in values}
+    def _allowed_tables(self, context: dict[str, Any]) -> set[str]:
+        if context.get("schema_scope") == "routed":
+            values = context.get("allowed_physical_tables")
+            if not isinstance(values, list) or not values:
+                raise ValueError("Strict routed schema whitelist is empty")
+            return {str(value).upper() for value in values}
+        if context.get("schema_scope") == "full_database":
+            with self._connect_catalog() as connection:
+                rows = connection.execute(
+                    "SELECT full_table_name FROM tables "
+                    "WHERE UPPER(database_id) = UPPER(?)",
+                    (context["allowed_database"],),
+                ).fetchall()
+            return {str(row["full_table_name"]).upper() for row in rows}
+        raise ValueError("Unsupported schema scope")
 
     def _task_dir(self, context: dict[str, Any]) -> Path:
         if self.config is None:
